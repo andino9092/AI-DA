@@ -23,9 +23,6 @@ release/build
 .erb/dll
 .env
 
-assets/*.ppn
-assets/*.pv
-
 .idea
 npm-debug.log.*
 *.css.d.ts
