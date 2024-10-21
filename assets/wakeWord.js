@@ -20,7 +20,13 @@ class RecorderController {
    recorder;
 
   constructor(recorderFrames = 512) {
-    this.model = new Porcupine(this.accessKey, [keywordPath], [0.5]);
+    try{
+      this.model = new Porcupine(this.accessKey, [keywordPath], [0.5]);
+
+    }
+    catch (error){
+      throw new Error('error, either model file doesnt exist or accessKey not in env')
+    }
     this.recorder = new PvRecorder(recorderFrames);
   }
 
@@ -57,6 +63,9 @@ parentPort?.on("message", (msg) => {
   }
   if (msg.action == "stop"){
     recorderController.stopRecording();
+    parentPort.postMessage({response: "closed"})
   }
 });
+
+
 

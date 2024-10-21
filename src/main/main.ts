@@ -26,5 +26,8 @@ worker.postMessage({
 
 worker.on('message', (msg) => {
   console.log(msg);
+  if (msg.response == 'closed'){
+    worker.terminate().then(() => console.log('worker closed'))
+  }
 });
 
