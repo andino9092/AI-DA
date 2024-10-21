@@ -12,12 +12,11 @@ import { Worker } from 'worker_threads';
 import { app, BrowserWindow, shell, ipcMain } from 'electron';
 import { AudioController } from './AudioController';
 
-
 const RESOURCES_PATH = app.isPackaged
   ? path.join(process.resourcesPath, 'assets')
   : path.join(__dirname, '../../assets');
-
-const asset = path.join(RESOURCES_PATH, 'wakeWord.js');;
+const asset = path.join(RESOURCES_PATH, 'scripts', 'recorder.js');
+;
 const worker = new Worker(asset);
 
 worker.postMessage({
@@ -26,8 +25,7 @@ worker.postMessage({
 
 worker.on('message', (msg) => {
   console.log(msg);
-  if (msg.response == 'closed'){
-    worker.terminate().then(() => console.log('worker closed'))
+  if (msg.response == 'closed') {
+    worker.terminate().then(() => console.log('worker closed'));
   }
-});
-
+})
