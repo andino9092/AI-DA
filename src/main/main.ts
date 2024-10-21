@@ -11,14 +11,15 @@ import path from 'path';
 import { Worker } from 'worker_threads';
 import { app, BrowserWindow, shell, ipcMain } from 'electron';
 import { AudioController } from './AudioController';
-
+import { ResponseHandler } from './ResponseHandler';
 
 const RESOURCES_PATH = app.isPackaged
   ? path.join(process.resourcesPath, 'assets')
   : path.join(__dirname, '../../assets');
-
-const asset = path.join(RESOURCES_PATH, 'wakeWord.js');;
+const asset = path.join(RESOURCES_PATH, 'scripts', 'recorder.js');
+;
 const worker = new Worker(asset);
+const intentHandler = new ResponseHandler();
 
 worker.postMessage({
   action: 'start',
@@ -26,5 +27,18 @@ worker.postMessage({
 
 worker.on('message', (msg) => {
   console.log(msg);
-});
+  if (msg.response == 'closed') {
+    worker.terminate().then(() => console.log('worker closed'));
+  }
+  else if (msg.action == 'intent'){
+    try{
+      intentHandler.handleIntent(msg.content.intent, msg.content.slots)
+
+    }
+    catch(error){
+      console.log(error)
+    }
+  }
+})
+
 
