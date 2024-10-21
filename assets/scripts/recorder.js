@@ -38,7 +38,6 @@ class RecorderController {
     };
 
     const intentCallback = async (inference) => {
-      console.log(inference);
       this.lastIntentResponse = inference;
       this.phraseProcessingStatus = false;
     };
@@ -74,6 +73,7 @@ class RecorderController {
         if (this.phraseProcessingStatus || this.voiceDetected) {
           this.audioBuffer.push(...frame);
         }
+
         // If a voice was detected earlier and intent matching is finished but cobra currently detects no voice, then set to voiceDetected to false
         if (this.voiceDetected && !this.phraseProcessingStatus) {
           if (stillTalking < 0.1) {
@@ -90,6 +90,13 @@ class RecorderController {
               }
               this.audioBuffer = [];
             }
+            // If it was understood, send it back to the parentPort
+            else{
+              parentPort.postMessage({
+                action: 'intent',
+                content: this.lastIntentResponse})
+            }
+            this.lastIntentResponse = undefined;
           }
         }
 
