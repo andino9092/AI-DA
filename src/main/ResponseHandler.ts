@@ -117,7 +117,7 @@ export class ResponseHandler {
   }
 
   testScript(){
-    // this.scriptCtrl.recordScript();
+    // const stopFunc = this.scriptCtrl.recordScript()
     // try{
     //   this.scriptCtrl.runScript();
 
@@ -130,3 +130,4 @@ export class ResponseHandler {
 
 
 
+;

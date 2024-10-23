@@ -76,7 +76,8 @@ export class ScriptController {
 
     const mouseDownListener = (e: UiohookMouseEvent) => {
       const mouseDownEvent = {
-        type: Number(e.button) > 1 ? 'rightMouseDown': 'leftMouseDown',
+        type: 'mouseDown',
+        side: Number(e.button) > 1 ? 'right': 'left',
         mods: makeMod(e),
       }
       this.actionLog.push(mouseDownEvent);
@@ -86,7 +87,7 @@ export class ScriptController {
       const mouseScrollEvent = {
         type: 'scroll',
         mods: makeMod(e),
-        direction: e.direction == 3 ? 'x': 'y',
+        direction: e.direction == 4 ? 'x': 'y',
         negative: e.rotation < 1,
         magnitude: e.amount,
       }
@@ -112,30 +113,45 @@ export class ScriptController {
   }
 
   recordScript() {
-    console.log('starting');
+    console.log('starting')
     uIOhook.start();
-
-
-    setTimeout(() => {
-      uIOhook.stop();
-      this.logToFile('testScript');
-    }, 2000);
+    // uIOhook.on('keydown', (e: UiohookKeyboardEvent) => {
+    //   if (e.keycode == UiohookKey.Q){
+    //     console.log('stopping');
+    //     this.logToFile('testing');
+    //     uIOhook.stop()
+    //   }
+    // })
   }
 
   runScript() {
-    const scriptPath = path.join(this.scriptPath, 'testScript.json')
+    const scriptPath = path.join(this.scriptPath, 'testing.json')
     const jsonStream = StreamArray.withParser();
 
     const readStream = fs.createReadStream(scriptPath);
     readStream.pipe(jsonStream);
 
+    // Config
+
+
     jsonStream.on('data', ({key, value}) => {
-      console.log(value)
       if (value.type == 'mouseMove'){
         robot.moveMouse(value.x, value.y)
       }
       else if (value.type == 'key'){
         robot.keyTap(keyMap[value.keyCode]);
+      }
+      else if (value.type == 'mouseDown'){
+        robot.mouseClick(value.side)
+      }
+      else if(value.type == 'scroll'){
+        const sign = value.negative ? -1 : 1
+        if (value.direction == 'x'){
+          robot.scrollMouse(sign * value.magnitude, 0);
+        }
+        else{
+          robot.scrollMouse(0, sign * value.magnitude);
+        }
       }
 
     })
