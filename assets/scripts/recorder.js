@@ -69,7 +69,9 @@ class RecorderController {
         // If wake word activated or voice detected from cobra
         this.picoModel.process(frame);
 
-        const stillTalking = this.voiceDetected ? this.cobraModel.process(frame) : 0
+        const stillTalking = this.voiceDetected
+          ? this.cobraModel.process(frame)
+          : 0;
         if (this.phraseProcessingStatus || this.voiceDetected) {
           this.audioBuffer.push(...frame);
         }
@@ -77,13 +79,14 @@ class RecorderController {
         // If a voice was detected earlier and intent matching is finished but cobra currently detects no voice, then set to voiceDetected to false
         if (this.voiceDetected && !this.phraseProcessingStatus) {
           if (stillTalking < 0.1) {
-            console.log('Voice no longer detected...')
+            console.log('Voice no longer detected...');
             this.voiceDetected = false;
             // If the last response said that it was not understood, then search it up
-            if (!this.lastIntentResponse?.isUnderstood){
+            if (!this.lastIntentResponse?.isUnderstood) {
               const audioBufferInt16 = new Int16Array(this.audioBuffer);
               try {
-                const {transcript, words} = this.leopardModel.process(audioBufferInt16);
+                const { transcript, words } =
+                  this.leopardModel.process(audioBufferInt16);
                 console.log(transcript);
               } catch (error) {
                 console.log(error);
@@ -91,15 +94,15 @@ class RecorderController {
               this.audioBuffer = [];
             }
             // If it was understood, send it back to the parentPort
-            else{
+            else {
               parentPort.postMessage({
                 action: 'intent',
-                content: this.lastIntentResponse})
+                content: this.lastIntentResponse,
+              });
             }
             this.lastIntentResponse = undefined;
           }
         }
-
       } catch (err) {
         console.log(err);
         console.log('no longer listening');

@@ -1,17 +1,15 @@
 import robot from '@hurdlegroup/robotjs';
-import os from 'os'
+import os from 'os';
 
 export class AudioController {
   private stepValue = 0;
 
-
   constructor() {
     const platform = os.platform();
-    if (platform == 'darwin'){
-      this.stepValue = 6
-    }
-    else if (platform == 'win32'){
-      this.stepValue = 2
+    if (platform == 'darwin') {
+      this.stepValue = 6;
+    } else if (platform == 'win32') {
+      this.stepValue = 2;
     }
   }
   // Positive -> Increase volume

@@ -1,5 +1,6 @@
 import { fetchWeatherApi } from 'openmeteo';
 import { AudioController } from './AudioController';
+import { ScriptController } from './ScriptController';
 
 interface Slot {
   [slotName: string]: string;
@@ -15,8 +16,9 @@ export interface MapCoords {
 }
 
 export class ResponseHandler {
-  private audioCtrl: AudioController | undefined;
-  private mappedFunctions: MappedResponse | undefined;
+  private audioCtrl: AudioController;
+  private scriptCtrl: ScriptController;
+  private mappedFunctions: MappedResponse;
   private currLocation: string | undefined;
   private searchParams: any | undefined;
 
@@ -69,9 +71,14 @@ export class ResponseHandler {
     });
   }
 
+  private recordScript(){
+    this.scriptCtrl?.recordScript();
+  }
+
   constructor() {
     this.currLocation = 'Brooklyn';
     this.audioCtrl = new AudioController();
+    this.scriptCtrl = new ScriptController();
     this.mappedFunctions = {
       lowerVolume: (slot: Slot) => this.handleChangeVolume(slot, 'lowerVolume'),
       increaseVolume: (slot: Slot) =>
@@ -108,4 +115,18 @@ export class ResponseHandler {
       this.mappedFunctions[intent](slots);
     }
   }
+
+  testScript(){
+    // this.scriptCtrl.recordScript();
+    // try{
+    //   this.scriptCtrl.runScript();
+
+    // }
+    // catch(e){
+    //   console.log(e)
+    // }
+  }
 }
+
+
+
