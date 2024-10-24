@@ -66,12 +66,12 @@ export class ResponseHandler {
         },
       };
 
-      console.log(weatherData.current.temperature2m)
-      console.log(latitude, longitude)
+      console.log(weatherData.current.temperature2m);
+      console.log(latitude, longitude);
     });
   }
 
-  private recordScript(){
+  private recordScript() {
     this.scriptCtrl?.recordScript();
   }
 
@@ -91,7 +91,6 @@ export class ResponseHandler {
       getWeather: (_: Slot) => this.getWeather(),
       recordScript: (slot: Slot) => {},
     };
-    
     fetch(
       `https://geocoding-api.open-meteo.com/v1/search?name=${this.currLocation}&count=3&language=en&format=json`,
     )
@@ -107,7 +106,7 @@ export class ResponseHandler {
           timezone: 'auto',
           forecast_days: 1,
           temperature_unit: 'fahrenheit',
-        }
+        };
       });
   }
 
@@ -117,12 +116,14 @@ export class ResponseHandler {
     }
   }
 
-  testScript(){
-    // const stopFunc = this.scriptCtrl.recordScript(notion
+  testScript() {
+    // const stopFunc = this.scriptCtrl.recordScript();
+    // try{
+    // this.scriptCtrl.runScript();
 
+    // }
+    // catch(e){
+    //   console.log(e)
+    // }
   }
 }
-
-
-
-;

@@ -9,6 +9,7 @@ export const keyMap: KeyMap = {
   14: 'backspace',
   3667: 'delete',
   28: 'enter',
+  57: ' ',
   15: 'tab',
   1: 'escape',
   57416: 'up',

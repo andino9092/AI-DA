@@ -8,17 +8,18 @@ import {
   UiohookKey,
 } from 'uiohook-napi';
 
-import robot from '@hurdlegroup/robotjs'
+import robot from '@hurdlegroup/robotjs';
 import fs from 'fs';
 
-import StreamArray from 'stream-json/streamers/StreamArray'
+import StreamArray from 'stream-json/streamers/StreamArray';
 import { keyMap } from './keyMap';
+import { timeStamp } from 'console';
 
-export interface KeyEvent{
-  type: string,
-  time: number,
-  keyCode: number,
-  mods: string[],
+export interface KeyEvent {
+  type: string;
+  time: number;
+  keyCode: number;
+  mods: string[];
 }
 
 export class ScriptController {
@@ -49,22 +50,33 @@ export class ScriptController {
       return mods;
     };
     // TODO: Determine what is string and what is just shortcut
+    // TODO: Improve how to track things. For example, how to know whether or not your holding down a key
     const keyListener = (e: UiohookKeyboardEvent) => {
-      console.log(e)
+      if (
+        e.keycode == UiohookKey.Shift ||
+        e.keycode == UiohookKey.ShiftRight ||
+        e.keycode == UiohookKey.CtrlRight ||
+        e.keycode == UiohookKey.Meta ||
+        e.keycode == UiohookKey.MetaRight ||
+        e.keycode == UiohookKey.Alt ||
+        e.keycode == UiohookKey.AltRight ||
+        e.keycode == UiohookKey.Ctrl
+      ) {
+        return;
+      }
       let keyEvent: KeyEvent = {
         type: 'key',
-        time: e.time,
+        time: Math.round(e.time / 1000000),
         keyCode: e.keycode,
         mods: makeMod(e),
       };
-
 
       this.actionLog.push(keyEvent);
     };
     const mouseMoveListener = (e: UiohookMouseEvent) => {
       const mouseMoveEvent = {
         type: 'mouseMove',
-        time: e.time,
+        time: Math.round(e.time / 1000000),
         x: e.x,
         y: e.y,
         mods: makeMod(e),
@@ -75,10 +87,10 @@ export class ScriptController {
     const mouseDownListener = (e: UiohookMouseEvent) => {
       const mouseDownEvent = {
         type: 'mouseDown',
-        time: e.time,
-        side: Number(e.button) > 1 ? 'right': 'left',
+        time: Math.round(e.time / 1000000),
+        side: Number(e.button) > 1 ? 'right' : 'left',
         mods: makeMod(e),
-      }
+      };
       this.actionLog.push(mouseDownEvent);
     };
 
@@ -86,18 +98,19 @@ export class ScriptController {
       const mouseScrollEvent = {
         type: 'scroll',
         mods: makeMod(e),
-        direction: e.direction == 4 ? 'x': 'y',
+        time: Math.round(e.time / 1000000),
+        direction: e.direction == 4 ? 'x' : 'y',
         negative: e.rotation < 1,
         magnitude: e.amount,
-      }
-      this.actionLog.push(mouseScrollEvent)
+      };
+      this.actionLog.push(mouseScrollEvent);
     };
 
-    uIOhook.on('keydown', keyListener)
+    uIOhook.on('keydown', keyListener);
     uIOhook.on('mousemove', mouseMoveListener);
-    uIOhook.on('mousedown', mouseDownListener)
+    uIOhook.on('mousedown', mouseDownListener);
     uIOhook.on('wheel', wheelListener);
-  };
+  }
 
   constructor() {
     // might have to change this later when building electron app due to packaging to another folder
@@ -112,60 +125,58 @@ export class ScriptController {
   }
 
   recordScript() {
-    console.log('starting')
+    console.log('starting');
     uIOhook.start();
     uIOhook.on('keydown', (e: UiohookKeyboardEvent) => {
-      if (e.keycode == UiohookKey.Q){
+      if (e.keycode == UiohookKey.Q) {
         console.log('stopping');
         this.logToFile('testing');
-        uIOhook.stop()
+        uIOhook.stop();
       }
-    })
+    });
   }
   static genInstructionFunc = (value: any) => {
-    if (value.type == 'mouseMove'){
-      return () => robot.moveMouse(value.x, value.y)
-    }
-    else if (value.type == 'key'){
-      return () => robot.keyTap(keyMap[value.keyCode]);
-    }
-    else if (value.type == 'mouseDown'){
-      return () => robot.mouseClick(value.side)
-    }
-    else if(value.type == 'scroll'){
-      const sign = value.negative ? -1 : 1
-      if (value.direction == 'x'){
+    if (value.type == 'mouseMove') {
+      return () => robot.moveMouse(value.x, value.y);
+    } else if (value.type == 'key') {
+      return () => robot.keyTap(keyMap[value.keyCode], [...value.mods]);
+    } else if (value.type == 'mouseDown') {
+      console.log(value);
+      return () => robot.mouseClick(value.side);
+    } else if (value.type == 'scroll') {
+      const sign = value.negative ? -1 : 1;
+      if (value.direction == 'x') {
         return () => robot.scrollMouse(sign * value.magnitude, 0);
-      }
-      else{
+      } else {
         return () => robot.scrollMouse(0, sign * value.magnitude);
       }
     }
-    return () => console.log('Doesnt match types')
-  }
+    return () => console.log('Doesnt match types');
+  };
 
   runScript() {
-    const scriptPath = path.join(this.scriptPath, 'testing.json')
+    const scriptPath = path.join(this.scriptPath, 'testing.json');
     const jsonStream = StreamArray.withParser();
 
     const readStream = fs.createReadStream(scriptPath);
     readStream.pipe(jsonStream);
 
     let firstTime: number | undefined;
-    jsonStream.on('data', ({key, value}) => {
+    jsonStream.on('data', ({ key, value }) => {
+      console.log(value);
       const timeoutFunc = ScriptController.genInstructionFunc(value);
-      if (firstTime){
+      if (firstTime) {
+        const timeStamp = Math.round(value.time - firstTime);
         setTimeout(() => {
           timeoutFunc();
-          // Need to figure out how to arrange these timeouts
-        }, value.time - firstTime)
-      }
-      else{
+        }, timeStamp);
+      } else {
         timeoutFunc();
         firstTime = value.time;
       }
-    })
-    console.log('running')
+    });
+    jsonStream.on('end', () => {
+      console.log('finished script');
+    });
   }
 }
-;
