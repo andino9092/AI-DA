@@ -106,6 +106,7 @@
     "@picovoice/cobra-node": "^2.0.2",
     "@picovoice/leopard-node": "^2.0.4",
     "@picovoice/orca-node": "^1.0.0",
+    "@picovoice/picollm-node": "^1.1.0",
     "@picovoice/picovoice-node": "^3.0.3",
     "@picovoice/porcupine-node": "^3.0.4",
     "@picovoice/pvrecorder-node": "^1.2.4",

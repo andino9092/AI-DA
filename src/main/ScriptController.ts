@@ -124,13 +124,13 @@ export class ScriptController {
     this.addListeners();
   }
 
-  recordScript() {
+  recordScript(scriptName: string) {
     console.log('starting');
     uIOhook.start();
     uIOhook.on('keydown', (e: UiohookKeyboardEvent) => {
       if (e.keycode == UiohookKey.Q) {
         console.log('stopping');
-        this.logToFile('testing');
+        this.logToFile(scriptName);
         uIOhook.stop();
       }
     });

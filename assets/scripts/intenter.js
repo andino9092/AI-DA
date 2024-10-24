@@ -18,7 +18,7 @@ const intentPath = path.join(modelPath, 'AIDA_en_mac_v3_0_0.rhn');
 console.log('Wake word path: ', wakeWordPath);
 console.log('Intent path: ', intentPath);
 
-class RecorderController {
+class IntentController {
   accessKey = process.env.ACCESS_KEY;
 
   picoModel;
@@ -59,6 +59,7 @@ class RecorderController {
     this.recorder = new PvRecorder(recorderFrames);
   }
 
+
   startRecording = async () => {
     this.recorder.start();
 
@@ -68,7 +69,6 @@ class RecorderController {
         const frame = await this.recorder.read();
         // If wake word activated or voice detected from cobra
         this.picoModel.process(frame);
-
         const stillTalking = this.voiceDetected
           ? this.cobraModel.process(frame)
           : 0;
@@ -96,7 +96,7 @@ class RecorderController {
             // If it was understood, send it back to the parentPort
             else {
               parentPort.postMessage({
-                action: 'intent',
+                response: 'intent',
                 content: this.lastIntentResponse,
               });
             }
@@ -105,28 +105,33 @@ class RecorderController {
         }
       } catch (err) {
         console.log(err);
-        console.log('no longer listening');
         break;
       }
     }
   };
 
   stopRecording = async () => {
-    await this.recorder.stop();
-    await this.picoModel.release();
+    console.log('stopping recording')
+    // await this.recorder.stop();
+    // await this.picoModel.release();
+    // await this.leopardModel.release();
   };
 
   processCommand = async () => {};
 }
 
-const recorderController = new RecorderController();
+const recorderController = new IntentController();
 
-parentPort?.on('message', (msg) => {
+parentPort.on('message', (msg) => {
+  console.log(msg)
   if (msg.action == 'start') {
     console.log('starting listening...');
     recorderController.startRecording();
   }
-  if (msg.action == 'stop') {
+  if (msg.action == 'pause') {
+    recorderController.stopRecording();
+  }
+  if (msg.action == 'close') {
     recorderController.stopRecording();
     parentPort.postMessage({ response: 'closed' });
   }

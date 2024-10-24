@@ -1,6 +1,8 @@
 import { fetchWeatherApi } from 'openmeteo';
 import { AudioController } from './AudioController';
 import { ScriptController } from './ScriptController';
+import { intentWorker, promptWorker } from './main';
+import { Worker } from 'worker_threads';
 
 interface Slot {
   [slotName: string]: string;
@@ -71,8 +73,22 @@ export class ResponseHandler {
     });
   }
 
-  private recordScript() {
-    this.scriptCtrl?.recordScript();
+  // Set this to private again
+  recordScript(intentWorker: Worker, promptWorker: Worker) {
+    intentWorker.postMessage({
+      action: 'pause',
+    });
+
+    // promptWorker.postMessage({
+    //   action: 'promptName',
+    // });
+
+    // intentWorker.once('message', (msg: any) => {
+    //   if (msg.action == 'startRecording') {
+    //     const scriptName = msg.scriptName;
+    //     this.scriptCtrl.recordScript(scriptName);
+    //   }
+    // });
   }
 
   constructor() {
@@ -89,25 +105,25 @@ export class ResponseHandler {
       pauseSound: (_: Slot) => this.audioCtrl?.pause(),
       runScript: (_: Slot) => {},
       getWeather: (_: Slot) => this.getWeather(),
-      recordScript: (slot: Slot) => {},
+      // recordScript: (slot: Slot) => this.recordScript(),
     };
-    fetch(
-      `https://geocoding-api.open-meteo.com/v1/search?name=${this.currLocation}&count=3&language=en&format=json`,
-    )
-      .then((response) => response.json())
-      .then((data) => {
-        const result = data.results[0];
-        this.searchParams = {
-          latitude: result.latitude,
-          longitude: result.longitude,
-          current: ['temperature_2m', 'rain'],
-          hourly: 'temperature_2m',
-          daily: ['temperature_2m_max', 'temperature_2m_min'],
-          timezone: 'auto',
-          forecast_days: 1,
-          temperature_unit: 'fahrenheit',
-        };
-      });
+    // fetch(
+    //   `https://geocoding-api.open-meteo.com/v1/search?name=${this.currLocation}&count=3&language=en&format=json`,
+    // )
+    //   .then((response) => response.json())
+    //   .then((data) => {
+    //     const result = data.results[0];
+    //     this.searchParams = {
+    //       latitude: result.latitude,
+    //       longitude: result.longitude,
+    //       current: ['temperature_2m', 'rain'],
+    //       hourly: 'temperature_2m',
+    //       daily: ['temperature_2m_max', 'temperature_2m_min'],
+    //       timezone: 'auto',
+    //       forecast_days: 1,
+    //       temperature_unit: 'fahrenheit',
+    //     };
+    //   });
   }
 
   handleIntent(intent: string, slots: Slot): void {
@@ -120,7 +136,6 @@ export class ResponseHandler {
     // const stopFunc = this.scriptCtrl.recordScript();
     // try{
     // this.scriptCtrl.runScript();
-
     // }
     // catch(e){
     //   console.log(e)
