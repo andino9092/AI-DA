@@ -14,16 +14,11 @@ import fs from 'fs';
 import StreamArray from 'stream-json/streamers/StreamArray'
 import { keyMap } from './keyMap';
 
-
-
-
-export interface KeyEvent {
-  type: string;
-  altKey: boolean;
-  ctrlKey: boolean;
-  shiftKey: boolean;
-  metaKey: boolean;
-  keyCode: number;
+export interface KeyEvent{
+  type: string,
+  time: number,
+  keyCode: number,
+  mods: string[],
 }
 
 export class ScriptController {
@@ -56,17 +51,20 @@ export class ScriptController {
     // TODO: Determine what is string and what is just shortcut
     const keyListener = (e: UiohookKeyboardEvent) => {
       console.log(e)
-      let keyEvent = {
+      let keyEvent: KeyEvent = {
         type: 'key',
+        time: e.time,
         keyCode: e.keycode,
         mods: makeMod(e),
       };
+
 
       this.actionLog.push(keyEvent);
     };
     const mouseMoveListener = (e: UiohookMouseEvent) => {
       const mouseMoveEvent = {
         type: 'mouseMove',
+        time: e.time,
         x: e.x,
         y: e.y,
         mods: makeMod(e),
@@ -77,6 +75,7 @@ export class ScriptController {
     const mouseDownListener = (e: UiohookMouseEvent) => {
       const mouseDownEvent = {
         type: 'mouseDown',
+        time: e.time,
         side: Number(e.button) > 1 ? 'right': 'left',
         mods: makeMod(e),
       }
@@ -101,7 +100,7 @@ export class ScriptController {
   };
 
   constructor() {
-    // might have to change this later when building electron app due to packaging to another file
+    // might have to change this later when building electron app due to packaging to another folder
     this.scriptPath = path.join(__dirname, '../../userScripts');
     if (!fs.existsSync(this.scriptPath)) {
       fs.mkdirSync(this.scriptPath);
@@ -115,13 +114,34 @@ export class ScriptController {
   recordScript() {
     console.log('starting')
     uIOhook.start();
-    // uIOhook.on('keydown', (e: UiohookKeyboardEvent) => {
-    //   if (e.keycode == UiohookKey.Q){
-    //     console.log('stopping');
-    //     this.logToFile('testing');
-    //     uIOhook.stop()
-    //   }
-    // })
+    uIOhook.on('keydown', (e: UiohookKeyboardEvent) => {
+      if (e.keycode == UiohookKey.Q){
+        console.log('stopping');
+        this.logToFile('testing');
+        uIOhook.stop()
+      }
+    })
+  }
+  static genInstructionFunc = (value: any) => {
+    if (value.type == 'mouseMove'){
+      return () => robot.moveMouse(value.x, value.y)
+    }
+    else if (value.type == 'key'){
+      return () => robot.keyTap(keyMap[value.keyCode]);
+    }
+    else if (value.type == 'mouseDown'){
+      return () => robot.mouseClick(value.side)
+    }
+    else if(value.type == 'scroll'){
+      const sign = value.negative ? -1 : 1
+      if (value.direction == 'x'){
+        return () => robot.scrollMouse(sign * value.magnitude, 0);
+      }
+      else{
+        return () => robot.scrollMouse(0, sign * value.magnitude);
+      }
+    }
+    return () => console.log('Doesnt match types')
   }
 
   runScript() {
@@ -131,29 +151,19 @@ export class ScriptController {
     const readStream = fs.createReadStream(scriptPath);
     readStream.pipe(jsonStream);
 
-    // Config
-
-
+    let firstTime: number | undefined;
     jsonStream.on('data', ({key, value}) => {
-      if (value.type == 'mouseMove'){
-        robot.moveMouse(value.x, value.y)
+      const timeoutFunc = ScriptController.genInstructionFunc(value);
+      if (firstTime){
+        setTimeout(() => {
+          timeoutFunc();
+          // Need to figure out how to arrange these timeouts
+        }, value.time - firstTime)
       }
-      else if (value.type == 'key'){
-        robot.keyTap(keyMap[value.keyCode]);
+      else{
+        timeoutFunc();
+        firstTime = value.time;
       }
-      else if (value.type == 'mouseDown'){
-        robot.mouseClick(value.side)
-      }
-      else if(value.type == 'scroll'){
-        const sign = value.negative ? -1 : 1
-        if (value.direction == 'x'){
-          robot.scrollMouse(sign * value.magnitude, 0);
-        }
-        else{
-          robot.scrollMouse(0, sign * value.magnitude);
-        }
-      }
-
     })
     console.log('running')
   }

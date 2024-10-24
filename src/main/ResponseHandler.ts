@@ -91,6 +91,7 @@ export class ResponseHandler {
       getWeather: (_: Slot) => this.getWeather(),
       recordScript: (slot: Slot) => {},
     };
+    
     fetch(
       `https://geocoding-api.open-meteo.com/v1/search?name=${this.currLocation}&count=3&language=en&format=json`,
     )
@@ -117,14 +118,8 @@ export class ResponseHandler {
   }
 
   testScript(){
-    // const stopFunc = this.scriptCtrl.recordScript()
-    // try{
-    //   this.scriptCtrl.runScript();
+    // const stopFunc = this.scriptCtrl.recordScript(notion
 
-    // }
-    // catch(e){
-    //   console.log(e)
-    // }
   }
 }
 
