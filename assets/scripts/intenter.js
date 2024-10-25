@@ -29,7 +29,7 @@ class IntentController {
   voiceDetected = false;
   lastIntentResponse;
   audioBuffer = [];
-
+  stop = false;
   constructor(recorderFrames = 512) {
     const keywordCallback = async (index) => {
       console.log('Yes?');
@@ -62,9 +62,12 @@ class IntentController {
 
   startRecording = async () => {
     this.recorder.start();
-
+    this.stop = false;
     console.log("I'm listening...");
     while (this.recorder.isRecording) {
+      if (this.stop){
+        continue;
+      }
       try {
         const frame = await this.recorder.read();
         // If wake word activated or voice detected from cobra
@@ -112,6 +115,7 @@ class IntentController {
 
   stopRecording = async () => {
     console.log('stopping recording')
+    this.stop = true;
     // await this.recorder.stop();
     // await this.picoModel.release();
     // await this.leopardModel.release();

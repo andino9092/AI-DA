@@ -49,7 +49,8 @@
     "start:main": "concurrently -k \"cross-env NODE_ENV=development TS_NODE_TRANSPILE_ONLY=true webpack --watch --config ./.erb/configs/webpack.config.main.dev.ts\" \"electronmon .\"",
     "start:preload": "cross-env NODE_ENV=development TS_NODE_TRANSPILE_ONLY=true webpack --config ./.erb/configs/webpack.config.preload.dev.ts",
     "start:renderer": "cross-env NODE_ENV=development TS_NODE_TRANSPILE_ONLY=true webpack serve --config ./.erb/configs/webpack.config.renderer.dev.ts",
-    "test": "jest"
+    "test": "jest",
+    "testPrompter": "node testScripts/testPrompter.js"
   },
   "browserslist": [
     "extends browserslist-config-erb"
@@ -103,6 +104,7 @@
   "dependencies": {
     "@electron/notarize": "^2.3.2",
     "@hurdlegroup/robotjs": "^0.12.2",
+    "@picovoice/cheetah-node": "^2.0.3",
     "@picovoice/cobra-node": "^2.0.2",
     "@picovoice/leopard-node": "^2.0.4",
     "@picovoice/orca-node": "^1.0.0",

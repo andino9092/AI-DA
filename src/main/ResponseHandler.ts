@@ -79,16 +79,17 @@ export class ResponseHandler {
       action: 'pause',
     });
 
-    // promptWorker.postMessage({
-    //   action: 'promptName',
-    // });
 
-    // intentWorker.once('message', (msg: any) => {
-    //   if (msg.action == 'startRecording') {
-    //     const scriptName = msg.scriptName;
-    //     this.scriptCtrl.recordScript(scriptName);
-    //   }
-    // });
+    promptWorker.postMessage({
+      action: 'promptName',
+    })
+
+    promptWorker.once('message', (msg: any) => {
+      if (msg.action == 'startRecording') {
+        const scriptName = msg.scriptName;
+        this.scriptCtrl.recordScript(scriptName);
+      }
+    });
   }
 
   constructor() {

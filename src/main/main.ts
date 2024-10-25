@@ -44,7 +44,7 @@ intentWorker.on('message', (msg) => {
       console.log(error);
     }
   }
-})
+});
 
 setTimeout(() => {
   intentHandler.recordScript(intentWorker, promptWorker);
