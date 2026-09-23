@@ -117,6 +117,20 @@ export function App() {
             onChange={(palette) => update({ shortcuts: { ...settings.shortcuts, palette } })}
           />
         </div>
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <div className="text-sm">Panic key</div>
+            <div className="text-xs text-zinc-500 dark:text-zinc-400">
+              Stops everything Aida is doing right away: the command, typing, talking, questions.
+            </div>
+          </div>
+          <ShortcutInput
+            label="Panic key"
+            value={settings.shortcuts.panic}
+            registered={info.panicShortcut.registered}
+            onChange={(panic) => update({ shortcuts: { ...settings.shortcuts, panic } })}
+          />
+        </div>
         <Toggle
           label="Launch at login"
           hint={

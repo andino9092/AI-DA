@@ -64,6 +64,22 @@ export class SpeechSegmenter {
     this.silenceMs = 0;
   }
 
+  /** Ends the current segment now (push-to-talk released), as if the speaker went quiet. */
+  flush(): SegmenterEvent | null {
+    if (!this.speaking) return null;
+    const o = this.options;
+    const frames = this.segment;
+    const speechMs = frames.length * this.frameMs - this.silenceMs;
+    this.speaking = false;
+    this.segment = [];
+    this.speechRun = 0;
+    this.silenceMs = 0;
+    if (speechMs < o.minSpeechMs) return { type: 'discard' };
+    const samples = new Float32Array(frames.length * o.frameSamples);
+    frames.forEach((f, i) => samples.set(f, i * o.frameSamples));
+    return { type: 'end', samples };
+  }
+
   push(frame: Float32Array, probability: number): SegmenterEvent | null {
     const o = this.options;
     if (!this.speaking) {

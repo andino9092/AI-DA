@@ -7,6 +7,11 @@ export interface ToolContext {
   /** The window that was in front before AI-DA's own UI opened ("snap this left"). */
   activeWindow: number | null;
   signal: AbortSignal;
+  /**
+   * Asks the user mid-run, for when the risk is only known after looking (the button turned out
+   * to be "Send"). Resolves false if declined or unanswered.
+   */
+  confirm(summary: string): Promise<boolean>;
 }
 
 export interface ToolResult {

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import type { SensitiveValueSummary } from '@shared/privacy';
 import type { Settings, SettingsPatch } from '@shared/settings';
 import { Button, Section, Toggle } from './components';
+import { SensitiveApps } from './SensitiveApps';
 
 export function PrivacySection({
   settings,
@@ -96,6 +97,11 @@ export function PrivacySection({
         </form>
         {error && <p className="mt-2 text-xs text-red-600 dark:text-red-400">{error}</p>}
       </div>
+
+      <SensitiveApps
+        value={settings.privacy.sensitiveApps}
+        onChange={(sensitiveApps) => update({ privacy: { ...settings.privacy, sensitiveApps } })}
+      />
 
       <Toggle
         label="Also mask emails and phone numbers"

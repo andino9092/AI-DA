@@ -11,10 +11,11 @@
     "node": ">=22.12.0"
   },
   "scripts": {
-    "predev": "node scripts/check-node.cjs",
+    "predev": "node scripts/check-node.cjs && node scripts/build-native.mjs",
     "dev": "electron-vite dev",
     "start": "electron-vite preview",
-    "prebuild": "node scripts/check-node.cjs",
+    "prebuild": "node scripts/check-node.cjs && node scripts/build-native.mjs",
+    "native": "node scripts/build-native.mjs --force",
     "build": "electron-vite build",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "lint": "eslint .",

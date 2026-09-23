@@ -21,6 +21,8 @@ let deviceId: string | null = null;
 let sensitivity: WakeSensitivity = 'normal';
 /** Settings → Mic check is open: report the level all the time, not just while speaking. */
 let meter = false;
+/** Push-to-talk is held: only releasing it ends the command. */
+let hold = false;
 let vad: SileroVad | null = null;
 let stream: MediaStream | null = null;
 let capture: AudioContext | null = null;
@@ -34,8 +36,9 @@ const player = new Player((id) => voice.sendEvent({ type: 'playback-finished', i
 function configureSegmenter() {
   const { positive, negative } = VAD_THRESHOLDS[sensitivity];
   segmenter.configure({
-    // Commands allow longer pauses mid-sentence than the wake phrase check does.
-    endSilenceMs: mode === 'command' ? 800 : 640,
+    // Commands allow longer pauses mid-sentence than the wake phrase check does. While
+    // push-to-talk is held, pauses never end the command.
+    endSilenceMs: hold ? DEFAULT_SEGMENTER.maxSpeechMs : mode === 'command' ? 800 : 640,
     positiveThreshold: positive,
     negativeThreshold: negative,
   });
@@ -134,14 +137,17 @@ async function applyConfig(
   nextDevice: string | null,
   nextSensitivity: WakeSensitivity,
   nextMeter: boolean,
+  nextHold: boolean,
 ): Promise<void> {
   if (next !== 'off' && !(await ensureVad())) next = 'off';
   const deviceChanged = nextDevice !== deviceId;
   const wasOpen = mode !== 'off';
+  const wasCommand = mode === 'command';
   mode = next;
   deviceId = nextDevice;
   sensitivity = nextSensitivity;
   meter = nextMeter;
+  hold = nextHold && next === 'command';
   configureSegmenter();
   window.clearTimeout(commandTimer);
   if (mode === 'off') {
@@ -151,21 +157,41 @@ async function applyConfig(
   }
   if (!wasOpen || deviceChanged || !stream) await openMic();
   if (mode === 'command') {
-    segmenter.reset();
-    armCommandTimeout();
+    // Entering command mode starts fresh; changing hold or the meter mid-command must not drop
+    // what's being said. Holding push-to-talk waits as long as it's held.
+    if (!wasCommand) segmenter.reset();
+    if (!hold && !segmenter.isSpeaking) armCommandTimeout();
   }
+}
+
+/** Push-to-talk released: whatever was said so far is the command. */
+function flush(): void {
+  processing = processing.then(() => {
+    const event = segmenter.flush();
+    if (event?.type === 'end') voice.sendUtterance({ mode, samples: event.samples });
+    else armCommandTimeout();
+  });
 }
 
 voice.onCommand((command: AudioCommand) => {
   switch (command.type) {
     case 'config':
-      void applyConfig(command.mode, command.deviceId, command.sensitivity, command.meter);
+      void applyConfig(
+        command.mode,
+        command.deviceId,
+        command.sensitivity,
+        command.meter,
+        command.hold,
+      );
       break;
     case 'play':
       player.play(command.id, command.samples, command.sampleRate);
       break;
     case 'end-of-speech':
       player.endOfSpeech(command.id);
+      break;
+    case 'flush':
+      flush();
       break;
     case 'stop-playback':
       player.stop();

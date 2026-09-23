@@ -2,13 +2,6 @@ import { z } from 'zod';
 import type { WindowsBridge } from '../../native/win-host';
 import { defineTool } from '../types';
 
-const MEDIA_SPEECH = {
-  play_pause: 'Okay.',
-  next: 'Skipping to the next track.',
-  previous: 'Going back a track.',
-  stop: 'Stopped.',
-} as const;
-
 export function audioTools(win: WindowsBridge) {
   return [
     defineTool({
@@ -69,18 +62,6 @@ export function audioTools(win: WindowsBridge) {
           speak: `Volume is at ${level}%${muted ? ', and muted' : ''}.`,
           data: { level, muted },
         };
-      },
-    }),
-    defineTool({
-      name: 'media_control',
-      description:
-        'Control whatever media is playing (Spotify, YouTube, etc.) with the system media keys. play_pause toggles.',
-      risk: 'safe',
-      input: z.object({ action: z.enum(['play_pause', 'next', 'previous', 'stop']) }),
-      describe: ({ action }) => `Media: ${action.replace('_', '/')}`,
-      run: async ({ action }) => {
-        await win.mediaKey(action);
-        return { ok: true, speak: MEDIA_SPEECH[action] };
       },
     }),
   ];

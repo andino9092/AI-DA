@@ -14,6 +14,7 @@ import { appTools } from '../../../src/main/tools/apps/tools';
 import { timeTools } from '../../../src/main/tools/info/time';
 import { ToolRegistry } from '../../../src/main/tools/registry';
 import { audioTools } from '../../../src/main/tools/system/audio';
+import { mediaTools } from '../../../src/main/tools/media/tools';
 import { windowTools } from '../../../src/main/tools/windows/tools';
 import { FakeProvider, FakeWindows, tempDir } from '../fakes';
 
@@ -35,6 +36,7 @@ function setup(options: {
   }));
   const registry = new ToolRegistry().register(
     ...audioTools(win),
+    ...mediaTools(win),
     ...appTools(win, new AppIndex(win), {
       launchApp: (id) => launched.push(id),
       openUrl: async (url) => void opened.push(url),
@@ -142,7 +144,7 @@ describe('Assistant: LLM path', () => {
     ]);
     const t = setup({ providers: [gemini] });
     expect(await t.run('this song is too loud and I hate it')).toBe(
-      'Skipping to the next track. Volume down to 30%.',
+      'Next up: Song B by Band. Volume down to 30%.',
     );
     expect(gemini.requests).toHaveLength(1);
   });

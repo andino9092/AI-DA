@@ -14,7 +14,34 @@ describe('parseInstant', () => {
     ['mute', [{ name: 'set_mute', args: { muted: true } }]],
     ['unmute the sound', [{ name: 'set_mute', args: { muted: false } }]],
     ["what's the volume", [{ name: 'get_volume', args: {} }]],
-    ['pause the music', [{ name: 'media_control', args: { action: 'play_pause' } }]],
+    ['pause the music', [{ name: 'media_control', args: { action: 'pause' } }]],
+    ['resume', [{ name: 'media_control', args: { action: 'play' } }]],
+    ['pause spotify', [{ name: 'media_control', args: { action: 'pause', app: 'spotify' } }]],
+    ['stop it', null],
+    [
+      'pause the music on spotify',
+      [{ name: 'media_control', args: { action: 'pause', app: 'spotify' } }],
+    ],
+    ['play on spotify', [{ name: 'media_control', args: { action: 'play', app: 'spotify' } }]],
+    ['next song on spotify', [{ name: 'media_control', args: { action: 'next', app: 'spotify' } }]],
+    ["what's playing", [{ name: 'now_playing', args: {} }]],
+    ['what song is this', [{ name: 'now_playing', args: {} }]],
+    ['play daft punk on spotify', null],
+    [
+      'click the send button in discord',
+      [{ name: 'click', args: { target: 'send', window: 'discord' } }],
+    ],
+    ['click on settings', [{ name: 'click', args: { target: 'settings' } }]],
+    ['press play on spotify', [{ name: 'click', args: { target: 'play', window: 'spotify' } }]],
+    ['select all', null],
+    ['press enter', [{ name: 'press_keys', args: { keys: 'enter' } }]],
+    ['press control shift t', [{ name: 'press_keys', args: { keys: 'ctrl+shift+t' } }]],
+    ['press ctrl+w', [{ name: 'press_keys', args: { keys: 'ctrl+w' } }]],
+    ['scroll down', [{ name: 'scroll', args: { direction: 'down', amount: 5 } }]],
+    [
+      'scroll up a bit in chrome',
+      [{ name: 'scroll', args: { direction: 'up', amount: 2, window: 'chrome' } }],
+    ],
     ['skip this song', [{ name: 'media_control', args: { action: 'next' } }]],
     ['previous track', [{ name: 'media_control', args: { action: 'previous' } }]],
     ['what time is it?', [{ name: 'get_time', args: {} }]],
@@ -50,7 +77,7 @@ describe('parseInstant', () => {
       { name: 'set_volume', args: { level: 30 } },
     ]);
     expect(parseInstant('pause, then snap chrome left')).toEqual([
-      { name: 'media_control', args: { action: 'play_pause' } },
+      { name: 'media_control', args: { action: 'pause' } },
       { name: 'window_action', args: { action: 'snap_left', target: 'chrome' } },
     ]);
   });

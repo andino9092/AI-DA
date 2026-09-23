@@ -21,6 +21,18 @@ export interface VolumeState {
 }
 
 export type MediaAction = 'play_pause' | 'next' | 'previous' | 'stop';
+export type MediaCommand = 'play' | 'pause' | 'toggle' | 'next' | 'previous' | 'stop';
+
+export interface MediaSession {
+  /** Windows' id for the app, e.g. "Spotify.exe" or a Store app id. */
+  appId: string;
+  status: string;
+  title: string;
+  artist: string;
+  /** The session Windows shows in the volume flyout. */
+  current: boolean;
+}
+
 export type WindowAction =
   | 'focus'
   | 'minimize'
@@ -31,16 +43,86 @@ export type WindowAction =
   | 'snap_right'
   | 'next_monitor';
 
-/** Everything AI-DA asks of Windows. Phase 3's .NET sidecar implements the same interface. */
+export interface UiElement {
+  /** Valid until the next snapshot. */
+  id: number;
+  role: string;
+  name: string;
+  enabled: boolean;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  /** Field contents (never for password fields). */
+  value?: string;
+  password?: boolean;
+  focused?: boolean;
+}
+
+export interface UiSnapshot {
+  window: { title: string; process: string };
+  elements: UiElement[];
+  truncated: boolean;
+}
+
+export interface OcrWord {
+  text: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+export interface OcrLine {
+  text: string;
+  words: OcrWord[];
+}
+
+export interface HotkeyBinding {
+  name: string;
+  /** Windows virtual-key code of the main key. */
+  vk: number;
+  ctrl: boolean;
+  alt: boolean;
+  shift: boolean;
+  win: boolean;
+}
+
+/** No app has a media session (nothing has played since it opened), or the named one doesn't. */
+export class NoMediaSessionError extends Error {
+  constructor(readonly app: string | null) {
+    super(app ? `${app} isn't playing anything.` : 'Nothing is playing media right now.');
+  }
+}
+
+/** A UI element id from an older snapshot: look at the window again. */
+export class StaleElementError extends Error {}
+
+/** Everything AI-DA asks of Windows, implemented by the aida-win.exe helper. */
 export interface WindowsBridge {
   getVolume(): Promise<VolumeState>;
   setVolume(level: number): Promise<VolumeState>;
   setMuted(muted: boolean): Promise<VolumeState>;
   mediaKey(action: MediaAction): Promise<void>;
+  mediaSessions(): Promise<MediaSession[]>;
+  mediaControl(action: MediaCommand, app?: string): Promise<MediaSession & { accepted: boolean }>;
   listWindows(): Promise<WindowInfo[]>;
   foregroundWindow(): Promise<number>;
+  windowInfo(handle: number): Promise<WindowInfo>;
   windowAction(handle: number, action: WindowAction): Promise<boolean>;
   listStartApps(): Promise<StartApp[]>;
+  uiSnapshot(handle: number, max?: number): Promise<UiSnapshot>;
+  uiClick(id: number): Promise<{ method: string }>;
+  uiFocus(id: number): Promise<void>;
+  uiScroll(handle: number, direction: 'up' | 'down', amount: number): Promise<void>;
+  typeText(text: string): Promise<void>;
+  sendKeys(keys: string): Promise<void>;
+  clickAt(x: number, y: number, double?: boolean): Promise<void>;
+  releaseModifiers(): Promise<void>;
+  ocrWindow(handle: number): Promise<OcrLine[]>;
+  /** Watches these key combinations and reports presses and releases (for hold-to-talk). */
+  setHotkeys(bindings: HotkeyBinding[]): Promise<void>;
+  onHotkey(listener: (name: string, down: boolean) => void): () => void;
 }
 
 const responseSchema = z.object({
@@ -49,24 +131,57 @@ const responseSchema = z.object({
   result: z.unknown().optional(),
   error: z.string().optional(),
 });
+const hotkeyEventSchema = z.object({
+  event: z.literal('hotkey'),
+  name: z.string(),
+  down: z.boolean(),
+});
 
 const volumeSchema = z.object({ level: z.number(), muted: z.boolean() });
-const windowSchema = z
-  .object({
-    Handle: z.number(),
-    Title: z.string(),
-    Process: z.string(),
-    Pid: z.number(),
-    Minimized: z.boolean(),
-  })
-  .transform((w) => ({
-    handle: w.Handle,
-    title: w.Title,
-    process: w.Process,
-    pid: w.Pid,
-    minimized: w.Minimized,
-  }));
+const windowSchema = z.object({
+  handle: z.number(),
+  title: z.string(),
+  process: z.string(),
+  pid: z.number(),
+  minimized: z.boolean(),
+});
 const appSchema = z.object({ name: z.string(), appId: z.string() });
+const mediaSessionSchema = z.object({
+  appId: z.string(),
+  status: z.string(),
+  title: z.string(),
+  artist: z.string(),
+  current: z.boolean(),
+});
+const uiSnapshotSchema = z.object({
+  window: z.object({ title: z.string(), process: z.string() }),
+  elements: z.array(
+    z.object({
+      id: z.number(),
+      role: z.string(),
+      name: z.string(),
+      enabled: z.boolean(),
+      x: z.number(),
+      y: z.number(),
+      w: z.number(),
+      h: z.number(),
+      value: z.string().optional(),
+      password: z.boolean().optional(),
+      focused: z.boolean().optional(),
+    }),
+  ),
+  truncated: z.boolean(),
+});
+const ocrSchema = z.object({
+  lines: z.array(
+    z.object({
+      text: z.string(),
+      words: z.array(
+        z.object({ text: z.string(), x: z.number(), y: z.number(), w: z.number(), h: z.number() }),
+      ),
+    }),
+  ),
+});
 
 interface Pending {
   resolve: (value: unknown) => void;
@@ -75,23 +190,25 @@ interface Pending {
 }
 
 /**
- * Talks to a long-lived Windows PowerShell process that compiled `AidaWin.cs` once at startup
- * (~2–3 s), so each call afterwards takes only a few milliseconds.
+ * Talks to aida-win.exe, a small precompiled helper (native/aida-win) that starts in about 0.1 s.
+ * One JSON line per request and response. The helper is restarted on the next call if it exits.
  */
-export class PowerShellWindowsBridge implements WindowsBridge {
+export class SidecarWindowsBridge implements WindowsBridge {
   private proc: ChildProcessWithoutNullStreams | null = null;
   private ready: Promise<void> | null = null;
   private readonly pending = new Map<number, Pending>();
+  private readonly hotkeyListeners = new Set<(name: string, down: boolean) => void>();
+  private hotkeys: HotkeyBinding[] = [];
   private nextId = 1;
 
-  constructor(private readonly hostScriptPath: string) {}
+  constructor(private readonly exePath: string) {}
 
-  /** Starts the helper in the background so the first command doesn't pay the compile cost. */
   warmUp(): void {
     void this.ensureStarted().catch(() => {});
   }
 
   dispose(): void {
+    this.proc?.stdin.end();
     this.proc?.kill();
     this.proc = null;
     this.ready = null;
@@ -113,6 +230,22 @@ export class PowerShellWindowsBridge implements WindowsBridge {
     await this.call('media.key', { action });
   }
 
+  async mediaSessions() {
+    return z.array(mediaSessionSchema).parse(await this.call('media.sessions'));
+  }
+
+  async mediaControl(action: MediaCommand, app?: string) {
+    try {
+      return mediaSessionSchema
+        .extend({ accepted: z.boolean() })
+        .parse(await this.call('media.control', { action, app: app ?? null }));
+    } catch (err) {
+      if (err instanceof Error && err.message.startsWith('NO_SESSION'))
+        throw new NoMediaSessionError(app ?? null);
+      throw err;
+    }
+  }
+
   async listWindows() {
     const own = process.pid;
     return z
@@ -122,7 +255,11 @@ export class PowerShellWindowsBridge implements WindowsBridge {
   }
 
   async foregroundWindow() {
-    return z.number().parse(await this.call('windows.foreground'));
+    return windowSchema.parse(await this.call('windows.foreground')).handle;
+  }
+
+  async windowInfo(handle: number) {
+    return windowSchema.parse(await this.call('windows.info', { handle }));
   }
 
   async windowAction(handle: number, action: WindowAction) {
@@ -133,34 +270,73 @@ export class PowerShellWindowsBridge implements WindowsBridge {
     return z.array(appSchema).parse(await this.call('apps.list', undefined, 20_000));
   }
 
+  async uiSnapshot(handle: number, max = 250) {
+    return uiSnapshotSchema.parse(await this.call('ui.snapshot', { handle, max }, 15_000));
+  }
+
+  async uiClick(id: number) {
+    return z.object({ method: z.string() }).parse(await this.call('ui.click', { id }));
+  }
+
+  async uiFocus(id: number) {
+    await this.call('ui.focus', { id });
+  }
+
+  async uiScroll(handle: number, direction: 'up' | 'down', amount: number) {
+    await this.call('ui.scroll', { handle, direction, amount });
+  }
+
+  async typeText(text: string) {
+    await this.call('input.type', { text }, 30_000);
+  }
+
+  async sendKeys(keys: string) {
+    await this.call('input.keys', { keys });
+  }
+
+  async clickAt(x: number, y: number, double = false) {
+    await this.call('input.click', { x: Math.round(x), y: Math.round(y), double });
+  }
+
+  async releaseModifiers() {
+    await this.call('input.release');
+  }
+
+  async ocrWindow(handle: number) {
+    return ocrSchema.parse(await this.call('ocr.window', { handle }, 20_000)).lines;
+  }
+
+  async setHotkeys(bindings: HotkeyBinding[]) {
+    this.hotkeys = bindings;
+    await this.call('hotkeys.set', { bindings });
+  }
+
+  onHotkey(listener: (name: string, down: boolean) => void) {
+    this.hotkeyListeners.add(listener);
+    return () => this.hotkeyListeners.delete(listener);
+  }
+
   private ensureStarted(): Promise<void> {
     if (this.ready) return this.ready;
 
-    const proc = spawn(
-      'powershell.exe',
-      [
-        '-NoLogo',
-        '-NoProfile',
-        '-NonInteractive',
-        '-ExecutionPolicy',
-        'Bypass',
-        '-File',
-        this.hostScriptPath,
-      ],
-      { windowsHide: true },
-    );
+    const proc = spawn(this.exePath, [], { windowsHide: true });
     this.proc = proc;
 
     this.ready = new Promise<void>((resolve, reject) => {
       const startTimer = setTimeout(
         () => reject(new Error('Windows helper did not start in time.')),
-        30_000,
+        10_000,
       );
       const lines = createInterface({ input: proc.stdout });
       lines.on('line', (line) => {
         if (line.includes('"ready":true')) {
           clearTimeout(startTimer);
           resolve();
+          // A restarted helper forgets its shortcuts.
+          if (this.hotkeys.length > 0)
+            proc.stdin.write(
+              `${JSON.stringify({ id: null, cmd: 'hotkeys.set', args: { bindings: this.hotkeys } })}\n`,
+            );
           return;
         }
         this.handleLine(line);
@@ -183,19 +359,32 @@ export class PowerShellWindowsBridge implements WindowsBridge {
   }
 
   private handleLine(line: string): void {
-    let parsed: z.infer<typeof responseSchema>;
+    let message: unknown;
     try {
-      parsed = responseSchema.parse(JSON.parse(line));
+      message = JSON.parse(line);
     } catch {
       return;
     }
-    if (parsed.id === null) return;
-    const pending = this.pending.get(parsed.id);
+    const hotkey = hotkeyEventSchema.safeParse(message);
+    if (hotkey.success) {
+      for (const listener of this.hotkeyListeners) listener(hotkey.data.name, hotkey.data.down);
+      return;
+    }
+    const parsed = responseSchema.safeParse(message);
+    if (!parsed.success || parsed.data.id === null) return;
+    const pending = this.pending.get(parsed.data.id);
     if (!pending) return;
-    this.pending.delete(parsed.id);
+    this.pending.delete(parsed.data.id);
     clearTimeout(pending.timer);
-    if (parsed.ok) pending.resolve(parsed.result);
-    else pending.reject(new Error(cleanError(parsed.error)));
+    if (parsed.data.ok) pending.resolve(parsed.data.result);
+    else {
+      const error = parsed.data.error ?? 'Windows helper failed.';
+      pending.reject(
+        error.startsWith('STALE: ')
+          ? new StaleElementError(error.slice('STALE: '.length))
+          : new Error(error),
+      );
+    }
   }
 
   private failAll(error: Error): void {
@@ -224,11 +413,4 @@ export class PowerShellWindowsBridge implements WindowsBridge {
       proc.stdin.write(`${JSON.stringify({ id, cmd, args: args ?? {} })}\n`);
     });
   }
-}
-
-/** PowerShell wraps .NET exceptions as `Exception calling "Act" with "2" argument(s): "..."`. */
-function cleanError(message: string | undefined): string {
-  if (!message) return 'Windows helper failed.';
-  const inner = /argument\(s\): "(.*)"$/.exec(message);
-  return inner?.[1] ?? message;
 }

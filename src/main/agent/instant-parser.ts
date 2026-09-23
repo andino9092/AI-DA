@@ -7,6 +7,16 @@ export interface PlannedCall {
 
 const DEFAULT_STEP = 10;
 
+/** Key names the Windows helper understands (see native/aida-win/Input.cs). */
+const KEY_NAMES =
+  /^(?:ctrl|alt|shift|win|[a-z0-9]|f(?:[1-9]|1[0-9]|2[0-4])|enter|tab|esc|escape|space|backspace|delete|insert|home|end|pageup|pagedown|up|down|left|right)$/;
+const KEY_ALIASES: Record<string, string> = {
+  control: 'ctrl',
+  return: 'enter',
+  windows: 'win',
+  del: 'delete',
+};
+
 /** Words that mean "the window I was just using". */
 const THIS_WINDOW =
   /^(?:it|this|that|this window|that window|the window|current window|the current window|this app)$/;
@@ -80,25 +90,76 @@ function parseClause(clause: string): PlannedCall | null {
   )
     return { name: 'get_volume', args: {} };
 
-  // Media
+  // Media: explicit play and pause (not the toggle key), optionally for a named app.
+  const media = /^(.+?)(?: (?:on|in) ([a-z0-9]+(?: [a-z0-9]+)?))?$/.exec(clause);
+  const mediaVerb = media?.[1] ?? clause;
+  const app = media?.[2] ? { app: media[2] } : {};
+  const noun = String.raw`(?: (?:the )?(?:music|song|track|video|playback|media|podcast))?`;
+  if (new RegExp(String.raw`^(?:pause|stop)${noun}$`).test(mediaVerb))
+    return { name: 'media_control', args: { action: 'pause', ...app } };
+  // "pause spotify" names the app; "play despacito" names a song, so play needs "on <app>".
   if (
-    /^(?:play|pause|resume|stop)(?: (?:the )?(?:music|song|track|video|playback|media))?$/.test(
-      clause,
-    )
+    (m = clause.match(/^(?:pause|stop) ([a-z0-9]+)$/)) &&
+    !/^(?:it|this|that|everything)$/.test(m[1]!)
   )
-    return { name: 'media_control', args: { action: 'play_pause' } };
+    return { name: 'media_control', args: { action: 'pause', app: m[1] } };
+  if (new RegExp(String.raw`^(?:play|resume|unpause|continue)${noun}$`).test(mediaVerb))
+    return { name: 'media_control', args: { action: 'play', ...app } };
   if (
     /^(?:(?:play )?(?:the )?next(?: (?:song|track|video|one))?|skip(?: (?:this|the))?(?: (?:song|track|video|one))?)$/.test(
-      clause,
+      mediaVerb,
     )
   )
-    return { name: 'media_control', args: { action: 'next' } };
+    return { name: 'media_control', args: { action: 'next', ...app } };
   if (
     /^(?:(?:play )?(?:the )?(?:previous|last)(?: (?:song|track|video|one))?|go back a (?:song|track))$/.test(
+      mediaVerb,
+    )
+  )
+    return { name: 'media_control', args: { action: 'previous', ...app } };
+  if (
+    /^(?:what(?:'s| is) (?:playing|this song|the song|on)|what song is (?:this|playing)|who(?:'s| is) (?:this|singing)|what am i listening to)$/.test(
       clause,
     )
   )
-    return { name: 'media_control', args: { action: 'previous' } };
+    return { name: 'now_playing', args: {} };
+
+  // Keys: "press enter", "press control shift t", "press ctrl+w".
+  if ((m = clause.match(/^(?:press|hit) (.+)$/))) {
+    const keys = m[1]!
+      .replace(/\bpage (up|down)\b/g, 'page$1')
+      .split(/[\s+]+/)
+      .map((k) => KEY_ALIASES[k] ?? k);
+    if (keys.length <= 4 && keys.every((k) => KEY_NAMES.test(k)))
+      return { name: 'press_keys', args: { keys: keys.join('+') } };
+  }
+
+  // Scrolling
+  if (
+    (m = clause.match(
+      /^scroll (up|down)(?: (a (?:little )?bit|a little|a lot|more|way down|way up))?(?: (?:in|on) (.+))?$/,
+    ))
+  ) {
+    const amount =
+      m[2]?.includes('bit') || m[2] === 'a little'
+        ? 2
+        : m[2]?.startsWith('a lot') || m[2]?.startsWith('way')
+          ? 15
+          : 5;
+    const window = m[3] ? target(m[3]) : undefined;
+    return { name: 'scroll', args: { direction: m[1], amount, ...(window ? { window } : {}) } };
+  }
+
+  // Clicking by name: "click the send button in discord", "press play on spotify".
+  if (
+    (m = clause.match(
+      /^(?:click|tap|hit|press|select)(?: on)? (?:the )?(.+?)(?: (?:button|link|tab|icon|option|menu item|checkbox|box))?(?: (?:in|on) (?:the )?(.+?)(?: window| app)?)?$/,
+    ))
+  ) {
+    const window = m[2] ? target(m[2]) : undefined;
+    if (!/^(?:all|everything|it|this|that|them)$/.test(m[1]!))
+      return { name: 'click', args: { target: m[1], ...(window ? { window } : {}) } };
+  }
 
   // Time
   if (/^(?:what time is it|what(?:'s| is) the time|time)$/.test(clause))

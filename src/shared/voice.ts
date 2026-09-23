@@ -24,7 +24,10 @@ export type AudioCommand =
       sensitivity: WakeSensitivity;
       /** Report the mic level continuously (Settings → Mic check is open). */
       meter: boolean;
+      /** Push-to-talk is held: pauses don't end the command; releasing the key does. */
+      hold: boolean;
     }
+  | { type: 'flush' }
   | { type: 'play'; id: string; samples: Float32Array; sampleRate: number }
   | { type: 'end-of-speech'; id: string }
   | { type: 'stop-playback' }
@@ -64,7 +67,15 @@ export interface HeardEvent {
 export type MonitorEvent = { type: 'level'; rms: number } | { type: 'heard'; heard: HeardEvent };
 
 export type OverlayPhase =
-  'hidden' | 'listening' | 'transcribing' | 'thinking' | 'speaking' | 'reply' | 'error';
+  | 'hidden'
+  | 'listening'
+  | 'transcribing'
+  | 'thinking'
+  | 'speaking'
+  | 'reply'
+  | 'error'
+  /** Aida asked "Send it? Say yes or no" and is waiting for the answer. */
+  | 'confirm';
 
 export interface OverlayState {
   phase: OverlayPhase;

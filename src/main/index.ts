@@ -11,10 +11,13 @@ import { paths } from './app/paths';
 import { registerIpc } from './ipc';
 import { PrivacyGuard } from './privacy/guard';
 import { SensitiveValueStore } from './privacy/sensitive-values';
-import { PowerShellWindowsBridge } from './native/win-host';
+import { SidecarWindowsBridge } from './native/win-host';
+import { acceleratorToBinding } from './app/hotkeys';
 import { AppIndex } from './tools/apps/app-index';
 import { appTools } from './tools/apps/tools';
 import { audioTools } from './tools/system/audio';
+import { mediaTools } from './tools/media/tools';
+import { uiTools } from './tools/ui/tools';
 import { windowTools } from './tools/windows/tools';
 import { timeTools } from './tools/info/time';
 import { ToolRegistry } from './tools/registry';
@@ -58,14 +61,16 @@ function start(): void {
     customValues: sensitive.values(),
   }));
 
-  // Windows control (compiles its helper in the background, ~2–3 s).
-  const win = new PowerShellWindowsBridge(paths.resources('native', 'host.ps1'));
+  // Windows control through the small precompiled helper (starts in ~0.1 s).
+  const win = new SidecarWindowsBridge(paths.resources('native', 'aida-win.exe'));
   win.warmUp();
+  const sensitiveApps = () => settings.get().privacy.sensitiveApps;
   const apps = new AppIndex(win);
   void apps.refresh().catch(() => {});
 
   const registry = new ToolRegistry().register(
     ...audioTools(win),
+    ...mediaTools(win),
     ...appTools(win, apps, {
       launchApp: (appId) => {
         spawn('explorer.exe', [`shell:AppsFolder\\${appId}`], {
@@ -75,7 +80,8 @@ function start(): void {
       },
       openUrl: (url) => shell.openExternal(url),
     }),
-    ...windowTools(win),
+    ...windowTools(win, sensitiveApps),
+    ...uiTools({ win, sensitiveApps }),
     ...timeTools(),
   );
 
@@ -88,6 +94,7 @@ function start(): void {
       if (event.type === 'confirm') palette.show();
     },
     () => palette.hold(),
+    (summary): Promise<boolean> | null => voice.confirm(summary),
   );
   const executor = new ToolExecutor(registry, guard, confirmBroker.request, actionLog);
   const quota = new QuotaTracker(paths.quotaFile());
@@ -110,19 +117,41 @@ function start(): void {
 
   // Commands run one at a time, in the order they were given (typed or spoken).
   let queue: Promise<unknown> = Promise.resolve();
-  const runCommand = (text: string, source: 'palette' | 'voice', activeWindow: number | null) => {
+  let current: AbortController | null = null;
+  let generation = 0;
+  const runCommand = (
+    text: string,
+    source: 'palette' | 'voice',
+    activeWindow: number | null,
+  ): Promise<string> => {
+    const queuedIn = generation;
     const task = queue.then(async () => {
+      // The panic key also drops commands that were still waiting their turn.
+      if (queuedIn !== generation) return 'Cancelled.';
+      const abort = new AbortController();
+      current = abort;
       running++;
       tray.update({ state: trayState() });
       try {
-        return await assistant.handle(text, { source, activeWindow });
+        return await assistant.handle(text, { source, activeWindow, signal: abort.signal });
       } finally {
+        if (current === abort) current = null;
         running--;
         tray.update({ state: trayState() });
       }
     });
     queue = task.catch(() => {});
     return task;
+  };
+
+  /** Panic key: stop the running command, anything queued, speech and pending questions. */
+  const panic = () => {
+    generation++;
+    current?.abort();
+    confirmBroker.cancelAll();
+    voice.panic();
+    void win.releaseModifiers().catch(() => {});
+    actionLog.write({ type: 'panic' });
   };
 
   const voice = new VoiceService({
@@ -147,10 +176,10 @@ function start(): void {
     return url.startsWith('file://') || (!!devUrl && url.startsWith(devUrl));
   });
 
-  const shortcutStatus = { palette: false, pushToTalk: false };
+  const shortcutStatus = { palette: false, pushToTalk: false, panic: false };
   const registerShortcuts = () => {
     globalShortcut.unregisterAll();
-    const { palette: paletteKey, pushToTalk } = settings.get().shortcuts;
+    const { palette: paletteKey, pushToTalk, panic: panicKey } = settings.get().shortcuts;
     const register = (accelerator: string, fn: () => void) => {
       try {
         return globalShortcut.register(accelerator, fn);
@@ -159,8 +188,29 @@ function start(): void {
       }
     };
     shortcutStatus.palette = register(paletteKey, () => void palette.toggle());
-    shortcutStatus.pushToTalk = register(pushToTalk, () => voice.pushToTalk());
+    shortcutStatus.panic = register(panicKey, panic);
+    // Push-to-talk goes through the helper's keyboard hook so holding the key works; a plain
+    // shortcut (press, then speak) is the fallback.
+    const binding = acceleratorToBinding('ptt', pushToTalk);
+    shortcutStatus.pushToTalk = binding !== null;
+    const fallback = () => {
+      shortcutStatus.pushToTalk = register(pushToTalk, () => voice.pushToTalk());
+    };
+    if (binding)
+      win.setHotkeys([binding]).catch((err: unknown) => {
+        console.error('[AI-DA] keyboard hook:', err);
+        fallback();
+      });
+    else {
+      void win.setHotkeys([]).catch(() => {});
+      fallback();
+    }
   };
+  win.onHotkey((name, down) => {
+    if (name !== 'ptt') return;
+    if (down) voice.pushToTalkDown();
+    else voice.pushToTalkUp();
+  });
   registerShortcuts();
 
   const initial = settings.get();
@@ -202,6 +252,10 @@ function start(): void {
         pushToTalkShortcut: {
           accelerator: shortcuts.pushToTalk,
           registered: shortcutStatus.pushToTalk,
+        },
+        panicShortcut: {
+          accelerator: shortcuts.panic,
+          registered: shortcutStatus.panic,
         },
       };
     },

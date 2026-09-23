@@ -13,3 +13,4 @@ coverage/
 models/*.bin
 models/*.onnx
 *.tsbuildinfo
+resources/native/*.exe

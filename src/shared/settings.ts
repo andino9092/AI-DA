@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { DEFAULT_SENSITIVE_APPS } from './sensitive-apps';
 
 export const SETTINGS_VERSION = 1;
 
@@ -18,6 +19,11 @@ export const settingsSchema = z.object({
   privacy: z.object({
     /** Also mask emails and phone numbers before anything leaves the PC. */
     maskContactInfo: z.boolean(),
+    /**
+     * Apps and window-title words (password managers, banks). While one of these windows is the
+     * target, AI-DA reads nothing from the screen: no UI tree, no OCR, no window title.
+     */
+    sensitiveApps: z.array(z.string().min(1).max(60)).max(100),
   }),
   llm: z.object({
     /** Providers are tried in this order; later ones are fallbacks. */
@@ -45,6 +51,8 @@ export const settingsSchema = z.object({
     palette: z.string().min(1),
     /** Starts listening for a command right away (and stops Aida talking). */
     pushToTalk: z.string().min(1),
+    /** Stops everything AI-DA is doing: the running command, speech, pending confirmations. */
+    panic: z.string().min(1),
   }),
 });
 
@@ -61,7 +69,7 @@ export const DEFAULT_SETTINGS: Settings = {
   launchAtLogin: true,
   microphoneMuted: false,
   modelsDir: null,
-  privacy: { maskContactInfo: false },
+  privacy: { maskContactInfo: false, sensitiveApps: [...DEFAULT_SENSITIVE_APPS] },
   llm: {
     order: ['gemini', 'groq'],
     gemini: { model: 'gemini-3.5-flash-lite', dailyLimit: 450 },
@@ -76,5 +84,9 @@ export const DEFAULT_SETTINGS: Settings = {
     showOverlay: true,
     inputDeviceId: null,
   },
-  shortcuts: { palette: 'Control+Alt+A', pushToTalk: 'Control+Alt+V' },
+  shortcuts: {
+    palette: 'Control+Alt+A',
+    pushToTalk: 'Control+Alt+V',
+    panic: 'Control+Alt+Backspace',
+  },
 };

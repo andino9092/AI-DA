@@ -1,7 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { AssistantState } from '../../../src/shared/assistant';
 import type { AudioCommand, HeardEvent, OverlayState } from '../../../src/shared/voice';
-import { VoiceController } from '../../../src/main/voice/voice-controller';
+import { parseYesNo, VoiceController } from '../../../src/main/voice/voice-controller';
 
 const samples = new Float32Array(1600);
 
@@ -181,5 +181,74 @@ describe('VoiceController', () => {
     const idle = setup({ transcripts: [], wakeWord: false });
     idle.controller.refresh();
     expect(idle.modes().at(-1)).toBe('off');
+  });
+
+  it('holding push-to-talk listens until release, then sends what was said', async () => {
+    const t = setup({ transcripts: [] });
+    const now = Date.now();
+    const spy = vi.spyOn(Date, 'now').mockReturnValue(now);
+    t.controller.pushToTalkDown();
+    const holding = t.audio.filter((c) => c.type === 'config').at(-1);
+    expect(holding).toMatchObject({ mode: 'command', hold: true });
+    spy.mockReturnValue(now + 2000);
+    t.controller.pushToTalkUp();
+    expect(t.audio.filter((c) => c.type === 'config').at(-1)).toMatchObject({ hold: false });
+    expect(t.audio.at(-1)).toEqual({ type: 'flush' });
+    spy.mockRestore();
+  });
+
+  it('a quick tap of push-to-talk still means "speak, then pause"', () => {
+    const t = setup({ transcripts: [] });
+    t.controller.pushToTalkDown();
+    t.controller.pushToTalkUp();
+    expect(t.audio.some((c) => c.type === 'flush')).toBe(false);
+    expect(t.modes().at(-1)).toBe('command');
+  });
+
+  it('asks a confirmation out loud and hears the answer while the command waits', async () => {
+    const t = setup({ transcripts: ['Yes, do it.'] });
+    const answer = t.controller.confirm('Click “Send” in Discord');
+    expect(answer).not.toBeNull();
+    expect(t.spoken).toEqual(['Click “Send” in Discord?']);
+    await Promise.resolve();
+    t.finish();
+    expect(t.modes().at(-1)).toBe('command');
+    expect(t.overlay.at(-1)).toMatchObject({ phase: 'confirm' });
+    t.controller.onUtterance({ mode: 'command', samples });
+    await expect(answer).resolves.toBe(true);
+  });
+
+  it('anything but a clear yes is a no, and so is silence', async () => {
+    const unclear = setup({ transcripts: ['purple'], speak: false });
+    const first = unclear.controller.confirm('Close Discord')!;
+    unclear.controller.onUtterance({ mode: 'command', samples });
+    await expect(first).resolves.toBe(false);
+
+    const silent = setup({ transcripts: [], speak: false });
+    const second = silent.controller.confirm('Close Discord')!;
+    silent.controller.onAudioEvent({ type: 'command-timeout' });
+    await expect(second).resolves.toBe(false);
+  });
+
+  it('panic declines a pending question and stops talking', async () => {
+    const t = setup({ transcripts: [], speak: false });
+    const pending = t.controller.confirm('Send it')!;
+    t.controller.panic();
+    await expect(pending).resolves.toBe(false);
+    expect(t.overlay.at(-1)).toMatchObject({ phase: 'reply', text: 'Stopped.' });
+    expect(t.states.at(-1)).toBeNull();
+  });
+
+  it('can only confirm by voice when listening works', () => {
+    const t = setup({ transcripts: [], canListen: false });
+    expect(t.controller.confirm('Send it')).toBeNull();
+  });
+
+  it('reads yes and no', () => {
+    expect(parseYesNo('Yes.')).toBe(true);
+    expect(parseYesNo('Um, yeah')).toBe(true);
+    expect(parseYesNo("No, don't.")).toBe(false);
+    expect(parseYesNo('Cancel')).toBe(false);
+    expect(parseYesNo('Maybe later')).toBeNull();
   });
 });

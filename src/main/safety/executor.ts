@@ -3,9 +3,13 @@ import type { ToolRegistry } from '../tools/registry';
 import type { ToolResult } from '../tools/types';
 import type { JsonlLog } from './action-log';
 
+export type CommandSource = 'palette' | 'voice' | 'remote';
+
 export interface ConfirmRequest {
   id: string;
   requestId: string;
+  /** Where the command came from, so voice commands can be confirmed by voice. */
+  source: CommandSource;
   /** Already scrubbed: sensitive values appear as placeholders, never in plain text. */
   summary: string;
   /** The action would type or send a real sensitive value from the placeholder vault. */
@@ -16,6 +20,7 @@ export type Confirmer = (request: ConfirmRequest) => Promise<boolean>;
 
 export interface ExecuteContext {
   requestId: string;
+  source: CommandSource;
   session: PlaceholderSession;
   activeWindow: number | null;
   signal: AbortSignal;
@@ -63,15 +68,27 @@ export class ToolExecutor {
 
     const summary = this.guard.scrub(tool.describe(parsed.data), ctx.session).text;
 
-    if (tool.risk === 'confirm' || usedSensitive) {
+    const ask = async (text: string, usesSensitiveValue: boolean) => {
+      if (ctx.signal.aborted) return false;
+      const scrubbedText = this.guard.scrub(text, ctx.session).text;
       const approved = await this.confirm({
         id: `confirm-${++this.confirmCounter}`,
         requestId: ctx.requestId,
-        summary,
-        usesSensitiveValue: usedSensitive,
+        source: ctx.source,
+        summary: scrubbedText,
+        usesSensitiveValue,
       });
-      this.log.write({ type: 'confirm', requestId: ctx.requestId, summary, approved });
-      if (!approved) {
+      this.log.write({
+        type: 'confirm',
+        requestId: ctx.requestId,
+        summary: scrubbedText,
+        approved,
+      });
+      return approved;
+    };
+
+    if (tool.risk === 'confirm' || usedSensitive) {
+      if (!(await ask(summary, usedSensitive))) {
         return { ok: false, cancelled: true, speak: "Okay, I won't do that." };
       }
     }
@@ -80,6 +97,7 @@ export class ToolExecutor {
       const result = await tool.run(parsed.data, {
         activeWindow: ctx.activeWindow,
         signal: ctx.signal,
+        confirm: (text) => ask(text, false),
       });
       return this.finish(ctx, tool.name, summary, result);
     } catch (err) {

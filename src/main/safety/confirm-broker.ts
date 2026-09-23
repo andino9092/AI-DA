@@ -13,9 +13,15 @@ export class ConfirmBroker {
   constructor(
     private readonly present: (event: AssistantEvent) => void,
     private readonly holdUiOpen: () => () => void,
+    /** Asks out loud for voice commands; returns null when voice can't be used. */
+    private readonly askByVoice: (summary: string) => Promise<boolean> | null = () => null,
   ) {}
 
   request = (req: ConfirmRequest): Promise<boolean> => {
+    if (req.source === 'voice') {
+      const spoken = this.askByVoice(req.summary);
+      if (spoken) return spoken;
+    }
     const release = this.holdUiOpen();
     return new Promise<boolean>((resolve) => {
       const finish = (approved: boolean) => {

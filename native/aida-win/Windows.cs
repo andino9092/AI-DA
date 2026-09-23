@@ -1,6 +1,4 @@
-// Windows helpers for AI-DA, compiled at runtime by Windows PowerShell 5.1 (C# 5 syntax only:
-// no string interpolation, expression-bodied members or out variables).
-// Phase 3 replaces this with a proper .NET 8 sidecar exposing the same commands.
+// Top-level windows: list, focus, snap, move between monitors (per-monitor DPI aware).
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -9,96 +7,6 @@ using System.Text;
 
 namespace Aida
 {
-    [ComImport, Guid("5CDF2C82-841E-4546-9722-0CF74078229A"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-    internal interface IAudioEndpointVolume
-    {
-        int RegisterControlChangeNotify(IntPtr notify);
-        int UnregisterControlChangeNotify(IntPtr notify);
-        int GetChannelCount(out uint count);
-        int SetMasterVolumeLevel(float levelDb, ref Guid context);
-        int SetMasterVolumeLevelScalar(float level, ref Guid context);
-        int GetMasterVolumeLevel(out float levelDb);
-        int GetMasterVolumeLevelScalar(out float level);
-        int SetChannelVolumeLevel(uint channel, float levelDb, ref Guid context);
-        int SetChannelVolumeLevelScalar(uint channel, float level, ref Guid context);
-        int GetChannelVolumeLevel(uint channel, out float levelDb);
-        int GetChannelVolumeLevelScalar(uint channel, out float level);
-        int SetMute([MarshalAs(UnmanagedType.Bool)] bool mute, ref Guid context);
-        int GetMute([MarshalAs(UnmanagedType.Bool)] out bool mute);
-    }
-
-    [ComImport, Guid("D666063F-1587-4E43-81F1-B948E807363F"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-    internal interface IMMDevice
-    {
-        int Activate(ref Guid iid, int clsCtx, IntPtr activationParams, [MarshalAs(UnmanagedType.IUnknown)] out object iface);
-    }
-
-    [ComImport, Guid("A95664D2-9614-4F35-A746-DE8DB63617E6"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-    internal interface IMMDeviceEnumerator
-    {
-        int EnumAudioEndpoints(int dataFlow, int stateMask, out IntPtr devices);
-        int GetDefaultAudioEndpoint(int dataFlow, int role, out IMMDevice endpoint);
-    }
-
-    [ComImport, Guid("BCDE0395-E52F-467C-8E3D-C4579291692E")]
-    internal class MMDeviceEnumerator
-    {
-    }
-
-    public static class Audio
-    {
-        private static IAudioEndpointVolume Endpoint()
-        {
-            IMMDeviceEnumerator enumerator = (IMMDeviceEnumerator)new MMDeviceEnumerator();
-            IMMDevice device;
-            // eRender = 0, eMultimedia = 1
-            Marshal.ThrowExceptionForHR(enumerator.GetDefaultAudioEndpoint(0, 1, out device));
-            Guid iid = typeof(IAudioEndpointVolume).GUID;
-            object endpoint;
-            // CLSCTX_ALL = 23
-            Marshal.ThrowExceptionForHR(device.Activate(ref iid, 23, IntPtr.Zero, out endpoint));
-            return (IAudioEndpointVolume)endpoint;
-        }
-
-        public static int GetVolume()
-        {
-            float level;
-            Marshal.ThrowExceptionForHR(Endpoint().GetMasterVolumeLevelScalar(out level));
-            return (int)Math.Round(level * 100);
-        }
-
-        public static int SetVolume(int percent)
-        {
-            int clamped = Math.Max(0, Math.Min(100, percent));
-            Guid context = Guid.Empty;
-            Marshal.ThrowExceptionForHR(Endpoint().SetMasterVolumeLevelScalar(clamped / 100f, ref context));
-            return GetVolume();
-        }
-
-        public static bool GetMute()
-        {
-            bool muted;
-            Marshal.ThrowExceptionForHR(Endpoint().GetMute(out muted));
-            return muted;
-        }
-
-        public static bool SetMute(bool mute)
-        {
-            Guid context = Guid.Empty;
-            Marshal.ThrowExceptionForHR(Endpoint().SetMute(mute, ref context));
-            return GetMute();
-        }
-    }
-
-    public class WindowInfo
-    {
-        public long Handle { get; set; }
-        public string Title { get; set; }
-        public string Process { get; set; }
-        public int Pid { get; set; }
-        public bool Minimized { get; set; }
-    }
-
     public static class Win
     {
         private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
@@ -149,9 +57,9 @@ namespace Aida
             SetProcessDpiAwarenessContext(new IntPtr(-4));
         }
 
-        public static WindowInfo[] List()
+        public static List<Dictionary<string, object>> List()
         {
-            List<WindowInfo> result = new List<WindowInfo>();
+            List<Dictionary<string, object>> result = new List<Dictionary<string, object>>();
             EnumWindows(delegate (IntPtr hWnd, IntPtr lParam)
             {
                 if (!IsWindowVisible(hWnd)) return true;
@@ -159,45 +67,64 @@ namespace Aida
                 if ((GetWindowLong(hWnd, GWL_EXSTYLE) & WS_EX_TOOLWINDOW) != 0) return true;
                 int cloaked;
                 if (DwmGetWindowAttributeInt(hWnd, DWMWA_CLOAKED, out cloaked, 4) == 0 && cloaked != 0) return true;
-                int length = GetWindowTextLength(hWnd);
-                if (length == 0) return true;
-                StringBuilder title = new StringBuilder(length + 1);
-                GetWindowText(hWnd, title, title.Capacity);
-                uint pid;
-                GetWindowThreadProcessId(hWnd, out pid);
-                string process = "";
-                try { process = Process.GetProcessById((int)pid).ProcessName; } catch (Exception) { }
-                WindowInfo info = new WindowInfo();
-                info.Handle = hWnd.ToInt64();
-                info.Title = title.ToString();
-                info.Process = process;
-                info.Pid = (int)pid;
-                info.Minimized = IsIconic(hWnd);
-                result.Add(info);
+                if (GetWindowTextLength(hWnd) == 0) return true;
+                result.Add(Describe(hWnd));
                 return true;
             }, IntPtr.Zero);
-            return result.ToArray();
+            return result;
         }
 
-        public static long Foreground()
+        public static Dictionary<string, object> Foreground()
         {
-            return GetForegroundWindow().ToInt64();
+            return Describe(GetForegroundWindow());
         }
 
-        public static void MediaKey(string action)
+        public static Dictionary<string, object> Info(long handle)
         {
-            byte vk;
-            switch (action)
-            {
-                case "play_pause": vk = 0xB3; break;
-                case "next": vk = 0xB0; break;
-                case "previous": vk = 0xB1; break;
-                case "stop": vk = 0xB2; break;
-                default: throw new ArgumentException("Unknown media action: " + action);
-            }
-            // KEYEVENTF_EXTENDEDKEY = 1, KEYEVENTF_KEYUP = 2
-            keybd_event(vk, 0, 1, UIntPtr.Zero);
-            keybd_event(vk, 0, 3, UIntPtr.Zero);
+            IntPtr hWnd = new IntPtr(handle);
+            if (!IsWindow(hWnd)) throw new ArgumentException("That window no longer exists.");
+            return Describe(hWnd);
+        }
+
+        public static string Title(IntPtr hWnd)
+        {
+            int length = GetWindowTextLength(hWnd);
+            StringBuilder title = new StringBuilder(length + 1);
+            GetWindowText(hWnd, title, title.Capacity);
+            return title.ToString();
+        }
+
+        public static string ProcessName(IntPtr hWnd)
+        {
+            uint pid;
+            GetWindowThreadProcessId(hWnd, out pid);
+            try { return Process.GetProcessById((int)pid).ProcessName; } catch (Exception) { return ""; }
+        }
+
+        private static Dictionary<string, object> Describe(IntPtr hWnd)
+        {
+            uint pid;
+            GetWindowThreadProcessId(hWnd, out pid);
+            return Json.Obj(
+                "handle", hWnd.ToInt64(),
+                "title", Title(hWnd),
+                "process", ProcessName(hWnd),
+                "pid", (int)pid,
+                "minimized", IsIconic(hWnd));
+        }
+
+        /// <summary>Visible frame of a window in physical screen pixels (without invisible borders).</summary>
+        public static RECT Bounds(IntPtr hWnd)
+        {
+            RECT frame;
+            if (DwmGetWindowAttribute(hWnd, DWMWA_EXTENDED_FRAME_BOUNDS, out frame, Marshal.SizeOf(typeof(RECT))) == 0) return frame;
+            GetWindowRect(hWnd, out frame);
+            return frame;
+        }
+
+        public static bool IsForeground(IntPtr hWnd)
+        {
+            return GetForegroundWindow() == hWnd;
         }
 
         public static bool Act(long handle, string action)
@@ -218,7 +145,7 @@ namespace Aida
             }
         }
 
-        private static void Focus(IntPtr hWnd)
+        public static void Focus(IntPtr hWnd)
         {
             if (IsIconic(hWnd)) ShowWindow(hWnd, 9);
             // Tapping Alt lets a background process take the foreground (Windows focus-stealing rules).

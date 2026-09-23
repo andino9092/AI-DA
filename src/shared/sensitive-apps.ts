@@ -1,0 +1,23 @@
+/** Starting list for Settings → Privacy → Sensitive apps (kept free of zod for the renderer). */
+export const DEFAULT_SENSITIVE_APPS = [
+  '1Password',
+  'Bitwarden',
+  'KeePass',
+  'KeePassXC',
+  'LastPass',
+  'Dashlane',
+  'Keeper',
+  'NordPass',
+  'Proton Pass',
+  'RoboForm',
+  'Enpass',
+  'Credential Manager',
+  'Windows Security',
+  'bank',
+  'banking',
+  'PayPal',
+  'Venmo',
+  'Coinbase',
+  'checkout',
+  'password',
+] as const;

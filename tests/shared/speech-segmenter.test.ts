@@ -82,4 +82,13 @@ describe('SpeechSegmenter', () => {
       ]).map((e) => e.type),
     ).toEqual(['start']);
   });
+
+  it('flush ends the current segment immediately (push-to-talk released)', () => {
+    const seg = new SpeechSegmenter({ ...DEFAULT_SEGMENTER, endSilenceMs: 15_000 });
+    expect(seg.flush()).toBeNull();
+    for (let i = 0; i < 20; i++) seg.push(new Float32Array(512).fill(0.1), 0.9);
+    const event = seg.flush();
+    expect(event?.type).toBe('end');
+    expect(seg.isSpeaking).toBe(false);
+  });
 });

@@ -11,6 +11,7 @@ const LABELS: Record<OverlayState['phase'], string> = {
   speaking: '',
   reply: '',
   error: '',
+  confirm: '',
 };
 
 const DOT: Record<OverlayState['phase'], string> = {
@@ -21,6 +22,7 @@ const DOT: Record<OverlayState['phase'], string> = {
   speaking: 'bg-sky-400',
   reply: 'bg-accent',
   error: 'bg-red-400',
+  confirm: 'bg-amber-400',
 };
 
 function Overlay() {

@@ -16,7 +16,8 @@ export type LogEntry =
     }
   | { type: 'confirm'; requestId: string; summary: ScrubbedText; approved: boolean }
   | { type: 'reply'; requestId: string; text: ScrubbedText }
-  | { type: 'error'; requestId: string; text: ScrubbedText };
+  | { type: 'error'; requestId: string; text: ScrubbedText }
+  | { type: 'panic' };
 
 export type OutboundEntry = {
   type: 'outbound';

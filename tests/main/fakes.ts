@@ -1,13 +1,20 @@
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type {
-  MediaAction,
-  StartApp,
-  VolumeState,
-  WindowAction,
-  WindowInfo,
-  WindowsBridge,
+import {
+  NoMediaSessionError,
+  type HotkeyBinding,
+  type MediaAction,
+  type MediaCommand,
+  type MediaSession,
+  type OcrLine,
+  type UiElement,
+  type UiSnapshot,
+  type StartApp,
+  type VolumeState,
+  type WindowAction,
+  type WindowInfo,
+  type WindowsBridge,
 } from '../../src/main/native/win-host';
 import type {
   LlmProvider,
@@ -56,7 +63,7 @@ export class FakeWindows implements WindowsBridge {
     return this.windows.map((w) => ({ ...w }));
   }
   async foregroundWindow() {
-    return 2;
+    return this.foreground;
   }
   async windowAction(handle: number, action: WindowAction) {
     this.actions.push({ handle, action });
@@ -65,6 +72,101 @@ export class FakeWindows implements WindowsBridge {
   async listStartApps() {
     return this.apps;
   }
+
+  sessions: MediaSession[] = [
+    { appId: 'Spotify.exe', status: 'playing', title: 'Song A', artist: 'Band', current: true },
+  ];
+  mediaCommands: { action: MediaCommand; app?: string }[] = [];
+  async mediaSessions() {
+    return this.sessions.map((s) => ({ ...s }));
+  }
+  async mediaControl(action: MediaCommand, app?: string) {
+    this.mediaCommands.push({ action, app });
+    const session = app
+      ? this.sessions.find((s) => s.appId.toLowerCase().includes(app))
+      : this.sessions[0];
+    if (!session) throw new NoMediaSessionError(app ?? null);
+    if (action === 'pause') session.status = 'paused';
+    if (action === 'play') session.status = 'playing';
+    if (action === 'next') session.title = 'Song B';
+    return { ...session, accepted: true };
+  }
+
+  foreground = 2;
+  async windowInfo(handle: number) {
+    const w = this.windows.find((x) => x.handle === handle);
+    if (!w) throw new Error('That window no longer exists.');
+    return { ...w };
+  }
+
+  /** Controls per window handle, as UI Automation would report them. */
+  ui = new Map<number, UiElement[]>();
+  ocr = new Map<number, OcrLine[]>();
+  snapshots: number[] = [];
+  clicked: number[] = [];
+  clickedAt: { x: number; y: number }[] = [];
+  focusedElements: number[] = [];
+  typed: string[] = [];
+  keys: string[] = [];
+  scrolled: { handle: number; direction: string; amount: number }[] = [];
+  ocrReads: number[] = [];
+  async uiSnapshot(handle: number): Promise<UiSnapshot> {
+    this.snapshots.push(handle);
+    const w = await this.windowInfo(handle);
+    return {
+      window: { title: w.title, process: w.process },
+      elements: this.ui.get(handle) ?? [],
+      truncated: false,
+    };
+  }
+  async uiClick(id: number) {
+    this.clicked.push(id);
+    return { method: 'invoke' };
+  }
+  async uiFocus(id: number) {
+    this.focusedElements.push(id);
+  }
+  async uiScroll(handle: number, direction: 'up' | 'down', amount: number) {
+    this.scrolled.push({ handle, direction, amount });
+  }
+  async typeText(text: string) {
+    this.typed.push(text);
+  }
+  async sendKeys(keys: string) {
+    this.keys.push(keys);
+  }
+  async clickAt(x: number, y: number) {
+    this.clickedAt.push({ x, y });
+  }
+  async releaseModifiers() {}
+  async ocrWindow(handle: number) {
+    this.ocrReads.push(handle);
+    return this.ocr.get(handle) ?? [];
+  }
+  hotkeys: HotkeyBinding[] = [];
+  private hotkeyListener: ((name: string, down: boolean) => void) | null = null;
+  async setHotkeys(bindings: HotkeyBinding[]) {
+    this.hotkeys = bindings;
+  }
+  onHotkey(listener: (name: string, down: boolean) => void) {
+    this.hotkeyListener = listener;
+    return () => {
+      this.hotkeyListener = null;
+    };
+  }
+  pressHotkey(name: string, down: boolean) {
+    this.hotkeyListener?.(name, down);
+  }
+}
+
+/** A UI Automation element for tests. */
+export function el(
+  id: number,
+  role: string,
+  name: string,
+  extra: Partial<UiElement> = {},
+): UiElement {
+  return { id, role, name, enabled: true, x: id * 10, y: 0, w: 10, h: 10, ...extra };
 }
 
 type Script = LlmResponse | Error | ((request: LlmRequest) => LlmResponse);

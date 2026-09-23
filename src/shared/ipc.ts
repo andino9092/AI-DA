@@ -47,6 +47,7 @@ export interface AppInfo {
   /** Whether the command-box shortcut was registered (another app may own it). */
   paletteShortcut: { accelerator: string; registered: boolean };
   pushToTalkShortcut: { accelerator: string; registered: boolean };
+  panicShortcut: { accelerator: string; registered: boolean };
 }
 
 export type SaveSecretResult =

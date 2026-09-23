@@ -65,6 +65,7 @@ export class Assistant {
     try {
       const ctx = {
         requestId,
+        source: options.source,
         session: conversation.session,
         activeWindow: options.activeWindow,
         signal,

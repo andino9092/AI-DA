@@ -196,7 +196,7 @@ export function VoiceSection({
         <div>
           <div className="text-sm">Push to talk</div>
           <div className="text-xs text-zinc-500 dark:text-zinc-400">
-            Press, then speak. Also stops Aida while she is talking.
+            Hold while you speak, or tap and then speak. Also stops Aida while she is talking.
           </div>
         </div>
         <ShortcutInput

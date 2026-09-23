@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { WindowAction, WindowInfo, WindowsBridge } from '../../native/win-host';
+import { matchSensitiveApp } from '../../privacy/sensitive-apps';
 import { matchScore } from '../../util/fuzzy';
 import { defineTool } from '../types';
 
@@ -25,7 +26,7 @@ const PAST_TENSE: Record<(typeof ACTIONS)[number], string> = {
 
 const WINDOW_MATCH_THRESHOLD = 0.6;
 
-function label(w: WindowInfo): string {
+export function label(w: WindowInfo): string {
   return w.process ? w.process.charAt(0).toUpperCase() + w.process.slice(1) : w.title;
 }
 
@@ -38,7 +39,7 @@ export function findWindow(windows: WindowInfo[], query: string): WindowInfo | n
   return best && best.score >= WINDOW_MATCH_THRESHOLD ? best.w : null;
 }
 
-export function windowTools(win: WindowsBridge) {
+export function windowTools(win: WindowsBridge, sensitiveApps: () => readonly string[] = () => []) {
   return [
     defineTool({
       name: 'window_action',
@@ -90,7 +91,8 @@ export function windowTools(win: WindowsBridge) {
           data: {
             windows: windows.map((w) => ({
               app: w.process,
-              title: w.title,
+              // Titles can show what's inside (a vault name, a bank page): hide them for sensitive apps.
+              title: matchSensitiveApp(w, sensitiveApps()) ? '(hidden: sensitive app)' : w.title,
               minimized: w.minimized,
             })),
           },

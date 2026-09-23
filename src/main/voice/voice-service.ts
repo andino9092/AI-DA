@@ -108,6 +108,23 @@ export class VoiceService {
     this.controller.pushToTalk();
   }
 
+  pushToTalkDown(): void {
+    this.controller.pushToTalkDown();
+  }
+
+  pushToTalkUp(): void {
+    this.controller.pushToTalkUp();
+  }
+
+  /** Spoken yes/no for a voice command's confirmation; null if voice isn't available. */
+  confirm(summary: string): Promise<boolean> | null {
+    return this.controller.confirm(summary);
+  }
+
+  panic(): void {
+    this.controller.panic();
+  }
+
   async vadModel(): Promise<Uint8Array> {
     return new Uint8Array(await readFile(this.deps.models.path('vad/silero_vad.onnx')));
   }
