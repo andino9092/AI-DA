@@ -44,6 +44,8 @@ const api: AidaApi = {
     getVadModel: () => ipcRenderer.invoke(IPC.voiceVadModel),
     onOverlay: (listener) => subscribe(IPC.overlayState, listener),
     test: () => ipcRenderer.invoke(IPC.voiceTest),
+    monitor: (enabled) => ipcRenderer.invoke(IPC.voiceMonitor, enabled),
+    onMonitor: (listener) => subscribe(IPC.voiceMonitorEvent, listener),
   },
   palette: {
     submit: (text) => ipcRenderer.invoke(IPC.paletteSubmit, text),

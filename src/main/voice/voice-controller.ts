@@ -1,7 +1,16 @@
 import { randomUUID } from 'node:crypto';
 import type { AssistantState } from '@shared/assistant';
-import type { AudioCommand, AudioEvent, ListenMode, OverlayState, Utterance } from '@shared/voice';
-import type { SpeechToText } from './stt';
+import type {
+  AudioCommand,
+  AudioEvent,
+  HeardEvent,
+  ListenMode,
+  OverlayState,
+  Utterance,
+  WakeSensitivity,
+} from '@shared/voice';
+import { STT_SAMPLE_RATE, type SpeechToText } from './stt';
+import { peakDbfs } from './wav';
 import { matchWakePhrase } from './wake-phrase';
 
 export interface VoiceDeps {
@@ -21,7 +30,11 @@ export interface VoiceDeps {
     wakeWord: boolean;
     speakReplies: boolean;
     deviceId: string | null;
+    sensitivity: WakeSensitivity;
   };
+  /** Settings → Mic check is open: keep the mic on and report what's heard. */
+  monitoring: () => boolean;
+  onHeard: (heard: HeardEvent) => void;
   /** Ready to listen (VAD + speech recognition installed) / ready to talk (voice installed). */
   canListen: () => boolean;
   canSpeak: () => boolean;
@@ -48,10 +61,13 @@ export class VoiceController {
 
   /** Re-applies mic mode after settings change (mute, wake word on/off, device). */
   refresh(): void {
+    const { deviceId, sensitivity } = this.deps.settings();
     this.deps.audio({
       type: 'config',
       mode: this.listenMode(),
-      deviceId: this.deps.settings().deviceId,
+      deviceId,
+      sensitivity,
+      meter: this.deps.monitoring(),
     });
   }
 
@@ -132,6 +148,18 @@ export class VoiceController {
       return;
     }
 
+    const wake = expectingCommand ? null : matchWakePhrase(text, { fuzzy: this.fuzzy() });
+    // The mic check can run with the wake word off: report what was heard, but don't act on it.
+    const actOnWake = this.deps.settings().wakeWord;
+    if (this.deps.monitoring())
+      this.deps.onHeard({
+        text,
+        mode: expectingCommand ? 'command' : 'wake',
+        accepted: expectingCommand ? text !== '' : wake !== null && actOnWake,
+        peakDb: Math.round(peakDbfs(samples)),
+        seconds: Math.round((samples.length / STT_SAMPLE_RATE) * 10) / 10,
+      });
+
     let command: string;
     if (expectingCommand) {
       command = text;
@@ -141,8 +169,7 @@ export class VoiceController {
         return;
       }
     } else {
-      const wake = matchWakePhrase(text);
-      if (!wake) return; // Not for us: dropped without logging.
+      if (!wake || !actOnWake) return; // Not for us: dropped without logging.
       if (!wake.command) {
         this.stopSpeaking();
         this.armCommand();
@@ -234,10 +261,14 @@ export class VoiceController {
     this.toIdle(true);
   }
 
+  private fuzzy(): boolean {
+    return this.deps.settings().sensitivity !== 'low';
+  }
+
   private listenMode(): ListenMode {
     const { listening, wakeWord } = this.deps.settings();
     if (!listening || !this.deps.canListen()) return 'off';
     if (this.phase === 'command') return 'command';
-    return wakeWord ? 'wake' : 'off';
+    return wakeWord || this.deps.monitoring() ? 'wake' : 'off';
   }
 }

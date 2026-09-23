@@ -1,8 +1,11 @@
 import { join } from 'node:path';
 import { readFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
+import type { WebContents } from 'electron';
 import type { AssistantState } from '@shared/assistant';
+import { IPC } from '@shared/ipc';
 import type { Settings } from '@shared/settings';
+import type { MonitorEvent } from '@shared/voice';
 import { AudioWindow } from '../app/audio-window';
 import { OverlayWindow } from '../app/overlay-window';
 import type { ModelManager } from '../models/model-manager';
@@ -27,6 +30,8 @@ export class VoiceService {
   private readonly tts: TtsService;
   private stt: WhisperServer | null = null;
   private readonly controller: VoiceController;
+  /** The Settings window while its mic check is open. */
+  private monitor: WebContents | null = null;
 
   constructor(private readonly deps: VoiceServiceDeps) {
     const { models, settings } = deps;
@@ -50,13 +55,19 @@ export class VoiceService {
           wakeWord: s.voice.wakeWord,
           speakReplies: s.voice.speakReplies,
           deviceId: s.voice.inputDeviceId,
+          sensitivity: s.voice.wakeSensitivity,
         };
       },
+      monitoring: () => this.monitor !== null,
+      onHeard: (heard) => this.sendMonitor({ type: 'heard', heard }),
       canListen: () => this.canListen(),
       canSpeak: () => models.isReady('kokoro'),
     });
     this.audio = new AudioWindow({
-      onEvent: (event) => this.controller.onAudioEvent(event),
+      onEvent: (event) => {
+        if (event.type === 'level') this.sendMonitor({ type: 'level', rms: event.rms });
+        this.controller.onAudioEvent(event);
+      },
       onUtterance: (utterance) => this.controller.onUtterance(utterance),
     });
   }
@@ -99,6 +110,24 @@ export class VoiceService {
 
   async vadModel(): Promise<Uint8Array> {
     return new Uint8Array(await readFile(this.deps.models.path('vad/silero_vad.onnx')));
+  }
+
+  /**
+   * Settings → Mic check: while open, the mic stays on and that window sees the live level and
+   * what the wake-phrase check heard. Stops when the window closes.
+   */
+  setMonitor(target: WebContents | null): void {
+    if (target === this.monitor) return;
+    this.monitor = target;
+    target?.once('destroyed', () => {
+      if (this.monitor === target) this.setMonitor(null);
+    });
+    this.controller.refresh();
+  }
+
+  private sendMonitor(event: MonitorEvent): void {
+    if (this.monitor && !this.monitor.isDestroyed())
+      this.monitor.send(IPC.voiceMonitorEvent, event);
   }
 
   /** Settings → "Test voice". */

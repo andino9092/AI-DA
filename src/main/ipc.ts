@@ -1,4 +1,11 @@
-import { BrowserWindow, dialog, ipcMain, shell, type IpcMainInvokeEvent } from 'electron';
+import {
+  BrowserWindow,
+  dialog,
+  ipcMain,
+  shell,
+  type IpcMainInvokeEvent,
+  type WebContents,
+} from 'electron';
 import { z } from 'zod';
 import { IPC, type AppInfo, type SaveSecretResult } from '@shared/ipc';
 import type { ProviderUsage } from '@shared/llm';
@@ -32,6 +39,7 @@ interface Deps {
     vadModel(): Promise<Uint8Array>;
     isAudioWindow(webContentsId: number): boolean;
     test(): Promise<{ ok: boolean; error?: string }>;
+    setMonitor(target: WebContents | null): void;
   };
 }
 
@@ -150,4 +158,7 @@ export function registerIpc({
     return voice.vadModel();
   });
   handle(IPC.voiceTest, () => voice.test());
+  handle(IPC.voiceMonitor, (event, enabled) =>
+    voice.setMonitor(z.boolean().parse(enabled) ? event.sender : null),
+  );
 }

@@ -230,6 +230,7 @@ function start(): void {
       vadModel: () => voice.vadModel(),
       isAudioWindow: (id) => id === voice.audio.webContentsId,
       test: () => voice.test(),
+      setMonitor: (target) => voice.setMonitor(target),
     },
   });
 

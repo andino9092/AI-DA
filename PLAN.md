@@ -177,7 +177,8 @@ Kept deliberately small: *hear → understand → act → answer*, done fast and
     - Remote commands go through the same permission gate and Privacy Guard.
 
 ## Later (in rough priority order; each one is a separate module)
-1. Weather and info skills (Open-Meteo, reminders, alarms, unit conversion)
+1. Weather and info skills (Open-Meteo: free, no key; location is a city you set, never IP lookup. Reminders, alarms, unit conversion). Small enough to pull into Phase 3 if wanted.
+   - Spotify search-and-play ("play my liked songs", "play Daft Punk"): Spotify Web API with your own free developer app. Playback control needs Spotify Premium. Plain play/pause/next and "what's playing" don't need it: they come from Windows media sessions in Phase 3.
 2. Memory: preferences and app nicknames (local SQLite, never stores sensitive values)
 3. Routines ("Gaming mode", "Good morning")
 4. Local vision model (Ollama on your 3070 Ti) for "what's on my screen?" and hard-to-find UI
@@ -278,6 +279,7 @@ Each phase ends with something you can run and use.
 - Measure the latency budget and add it to CI as a benchmark.
 - ✅ *Done when:* "Hey Aida, pause the music" works hands-free in under 1 s.
 - *Built:* **Wake word = Whisper phrase check** (decided 2026-09-23): Silero VAD cuts speech into utterances, local Whisper transcribes them, and only text starting with "Hey Aida"/"Aida," is acted on; everything else is dropped unlogged. No training needed; a trained openWakeWord model can be added later to save GPU. Push-to-talk is **Ctrl+Alt+V** (Ctrl+Alt+Space was taken on this PC); both shortcuts are rebindable in Settings. Barge-in: push-to-talk or "Hey Aida, stop". A question from Aida opens the mic for the answer. Models download in Settings → Voice with pinned SHA-256s.
+- *Wake-word tuning (2026-09-23):* Settings → Voice → **Mic check** shows the live mic level and what Whisper heard (✓/✗ and peak dB), in memory only, never logged. **Sensitivity** (low/normal/high) sets the speech-detector threshold and whether close misspellings count ("Hey Aita", "Hey Aiden", "Hayda"). Quiet recordings are raised toward full scale (up to 10×) before transcription.
 - *Measured (injected clip, not a live mic):* end of speech → reply text 0.4–0.7 s, → first audio 1.1–1.5 s. Misses the 1 s target because Kokoro runs on the CPU (see backlog). Latency isn't in CI: CI runners have no GPU.
 
 **Phase 3: Real computer control → v2.0 release**
@@ -305,6 +307,7 @@ Found while building. Each should be fixed in the phase noted.
 | Spoken replies start 1.1–1.5 s after you stop talking (target: under 1 s) | Kokoro runs at ~0.4× real time on the CPU; DirectML can't run its `ConvTranspose` layers, and the q8 model is slower than real time on Zen 3 CPUs (no VNNI) | Run Kokoro on WebGPU in the audio window, or cache audio for common short replies (Phase 3) |
 | Push-to-talk is "press, then speak" (the voice detector decides when you're done), not "hold while speaking" | Electron global shortcuts only report key presses, not releases | Low-level keyboard hook in the .NET sidecar (Phase 3) |
 | While "Hey Aida" listening is on, all nearby speech is transcribed on the GPU (locally, then discarded) | The wake word is a Whisper phrase check, not a dedicated detector | Optional trained openWakeWord model as a cheap first gate (Later) |
+| "Hey Aida" is hard to catch over loud music or video from speakers | Echo cancellation only removes AI-DA's own audio, not Spotify or games | Use a headset mic, or push-to-talk. Later: echo cancellation using the system's audio output as a reference (sidecar loopback capture) |
 | Voice is English only | whisper-server is started with `-l en` | Language setting (Later: multi-language) |
 | The installer must unpack native modules (onnxruntime-node) from the asar archive | Native `.node` files can't load from inside asar | `asarUnpack` in electron-builder config (Phase 3 installer) |
 

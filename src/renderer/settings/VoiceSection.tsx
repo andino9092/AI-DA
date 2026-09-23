@@ -2,9 +2,16 @@ import { useEffect, useState } from 'react';
 import type { AppInfo } from '@shared/ipc';
 import type { ModelStatus } from '@shared/models';
 import type { Settings, SettingsPatch } from '@shared/settings';
-import { KOKORO_VOICES } from '@shared/voice';
+import { KOKORO_VOICES, type WakeSensitivity } from '@shared/voice';
 import { Button, Section, Toggle } from './components';
+import { MicCheck } from './MicCheck';
 import { ShortcutInput } from './ShortcutInput';
+
+const SENSITIVITY: { id: WakeSensitivity; label: string }[] = [
+  { id: 'low', label: 'Low: exact name only, ignores quiet speech' },
+  { id: 'normal', label: 'Normal' },
+  { id: 'high', label: 'High: quiet or distant mics, close-sounding names' },
+];
 
 function formatBytes(bytes: number): string {
   return bytes >= 1e9 ? `${(bytes / 1e9).toFixed(1)} GB` : `${Math.round(bytes / 1e6)} MB`;
@@ -43,6 +50,14 @@ export function VoiceSection({
   const missing = models.filter((m) => m.state !== 'ready');
   const downloading = models.some((m) => m.state === 'downloading');
   const remaining = missing.reduce((sum, m) => sum + m.bytes, 0);
+  const listenReady = ['vad', 'whisper-runtime', 'whisper-model'].every((id) =>
+    models.some((m) => m.id === id && m.state === 'ready'),
+  );
+  const micCheckBlocked = !listenReady
+    ? 'Download the speech models first.'
+    : settings.microphoneMuted
+      ? 'Unmute the microphone first (tray menu or General).'
+      : null;
 
   async function test() {
     setTesting(true);
@@ -111,6 +126,21 @@ export function VoiceSection({
         checked={voice.wakeWord}
         onChange={(v) => setVoice({ wakeWord: v })}
       />
+      <div className="flex items-center gap-3">
+        <span className="w-24 shrink-0 text-sm">Sensitivity</span>
+        <select
+          className={selectClass}
+          aria-label="Wake word sensitivity"
+          value={voice.wakeSensitivity}
+          onChange={(e) => setVoice({ wakeSensitivity: e.target.value as WakeSensitivity })}
+        >
+          {SENSITIVITY.map((o) => (
+            <option key={o.id} value={o.id}>
+              {o.label}
+            </option>
+          ))}
+        </select>
+      </div>
       <Toggle
         label="Speak replies"
         checked={voice.speakReplies}
@@ -139,6 +169,8 @@ export function VoiceSection({
           ))}
         </select>
       </div>
+
+      <MicCheck disabledReason={micCheckBlocked} />
 
       <div className="flex items-center gap-3">
         <span className="w-24 shrink-0 text-sm">Voice</span>

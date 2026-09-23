@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createServer } from 'node:net';
 import { dirname } from 'node:path';
-import { encodeWav } from './wav';
+import { encodeWav, normalizePeak } from './wav';
 import { cleanTranscript } from './wake-phrase';
 
 export interface SpeechToText {
@@ -70,7 +70,7 @@ export class WhisperServer implements SpeechToText {
     const form = new FormData();
     form.append(
       'file',
-      new Blob([encodeWav(samples, STT_SAMPLE_RATE)], { type: 'audio/wav' }),
+      new Blob([encodeWav(normalizePeak(samples), STT_SAMPLE_RATE)], { type: 'audio/wav' }),
       'speech.wav',
     );
     form.append('response_format', 'json');

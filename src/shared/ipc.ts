@@ -1,6 +1,6 @@
 import type { AssistantEvent } from './assistant';
 import type { ModelStatus } from './models';
-import type { AudioCommand, AudioEvent, OverlayState, Utterance } from './voice';
+import type { AudioCommand, AudioEvent, MonitorEvent, OverlayState, Utterance } from './voice';
 import type { ProviderUsage } from './llm';
 import type { AddSensitiveValueResult, SensitiveValueSummary } from './privacy';
 import type { Settings, SettingsPatch } from './settings';
@@ -32,6 +32,8 @@ export const IPC = {
   voiceUtterance: 'voice:utterance',
   voiceVadModel: 'voice:vad-model',
   voiceTest: 'voice:test',
+  voiceMonitor: 'voice:monitor',
+  voiceMonitorEvent: 'voice:monitor-event',
   overlayState: 'overlay:state',
   modelsStatus: 'models:status',
   modelsInstall: 'models:install',
@@ -91,6 +93,9 @@ export interface AidaApi {
     onOverlay(listener: (state: OverlayState) => void): () => void;
     /** Settings: speak a sample sentence with the current voice. */
     test(): Promise<{ ok: boolean; error?: string }>;
+    /** Settings → Mic check: turn live reporting on or off for this window. */
+    monitor(enabled: boolean): Promise<void>;
+    onMonitor(listener: (event: MonitorEvent) => void): () => void;
   };
   palette: {
     submit(text: string): Promise<void>;

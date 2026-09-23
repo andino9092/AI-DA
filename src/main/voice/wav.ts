@@ -21,3 +21,22 @@ export function encodeWav(samples: Float32Array, sampleRate: number): Buffer {
   }
   return buffer;
 }
+
+/** Loudest sample in dBFS (0 = full scale, -Infinity = silence). */
+export function peakDbfs(samples: Float32Array): number {
+  let peak = 0;
+  for (const s of samples) peak = Math.max(peak, Math.abs(s));
+  return 20 * Math.log10(peak);
+}
+
+/**
+ * Raises quiet recordings (old or distant mics) so the loudest sample sits near full scale.
+ * Gain is capped so background hiss isn't blown up, and loud audio is left alone.
+ */
+export function normalizePeak(samples: Float32Array, target = 0.9, maxGain = 10): Float32Array {
+  let peak = 0;
+  for (const s of samples) peak = Math.max(peak, Math.abs(s));
+  if (peak === 0 || peak >= target) return samples;
+  const gain = Math.min(maxGain, target / peak);
+  return samples.map((s) => s * gain);
+}

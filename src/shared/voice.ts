@@ -6,9 +6,25 @@ export type ListenMode = 'off' | 'wake' | 'command';
 
 export type Chime = 'listen' | 'done' | 'error';
 
+export type WakeSensitivity = 'low' | 'normal' | 'high';
+
+/** Speech-detector thresholds per sensitivity: lower hears quieter speech, and more noise. */
+export const VAD_THRESHOLDS: Record<WakeSensitivity, { positive: number; negative: number }> = {
+  low: { positive: 0.6, negative: 0.45 },
+  normal: { positive: 0.5, negative: 0.35 },
+  high: { positive: 0.35, negative: 0.2 },
+};
+
 /** Main process → hidden audio window. */
 export type AudioCommand =
-  | { type: 'config'; mode: ListenMode; deviceId: string | null }
+  | {
+      type: 'config';
+      mode: ListenMode;
+      deviceId: string | null;
+      sensitivity: WakeSensitivity;
+      /** Report the mic level continuously (Settings → Mic check is open). */
+      meter: boolean;
+    }
   | { type: 'play'; id: string; samples: Float32Array; sampleRate: number }
   | { type: 'end-of-speech'; id: string }
   | { type: 'stop-playback' }
@@ -29,6 +45,23 @@ export interface Utterance {
   /** 16 kHz mono float samples. */
   samples: Float32Array;
 }
+
+/**
+ * Settings → Mic check: what the wake-phrase check heard. Kept in memory for the open Settings
+ * window only; never logged or saved.
+ */
+export interface HeardEvent {
+  text: string;
+  mode: ListenMode;
+  /** Whether it counted as "Hey Aida" (or was a command after it). */
+  accepted: boolean;
+  /** Loudest moment, in dBFS. Below about -30 is quiet. */
+  peakDb: number;
+  seconds: number;
+}
+
+/** Main process → Settings window while the mic check is open. */
+export type MonitorEvent = { type: 'level'; rms: number } | { type: 'heard'; heard: HeardEvent };
 
 export type OverlayPhase =
   'hidden' | 'listening' | 'transcribing' | 'thinking' | 'speaking' | 'reply' | 'error';

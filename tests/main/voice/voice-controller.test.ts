@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { AssistantState } from '../../../src/shared/assistant';
-import type { AudioCommand, OverlayState } from '../../../src/shared/voice';
+import type { AudioCommand, HeardEvent, OverlayState } from '../../../src/shared/voice';
 import { VoiceController } from '../../../src/main/voice/voice-controller';
 
 const samples = new Float32Array(1600);
@@ -10,6 +10,8 @@ function setup(options: {
   reply?: string;
   speak?: boolean;
   canListen?: boolean;
+  wakeWord?: boolean;
+  monitoring?: boolean;
 }) {
   const transcripts = [...options.transcripts];
   const commands: string[] = [];
@@ -17,6 +19,7 @@ function setup(options: {
   const overlay: OverlayState[] = [];
   const states: (AssistantState | null)[] = [];
   const spoken: string[] = [];
+  const heard: HeardEvent[] = [];
   let finishSpeech: (() => void) | null = null;
 
   const controller = new VoiceController({
@@ -39,10 +42,13 @@ function setup(options: {
     setState: (s) => states.push(s),
     settings: () => ({
       listening: true,
-      wakeWord: true,
+      wakeWord: options.wakeWord ?? true,
       speakReplies: options.speak ?? true,
       deviceId: null,
+      sensitivity: 'normal',
     }),
+    monitoring: () => options.monitoring ?? false,
+    onHeard: (h) => heard.push(h),
     canListen: () => options.canListen ?? true,
     canSpeak: () => true,
   });
@@ -61,6 +67,7 @@ function setup(options: {
     overlay,
     states,
     spoken,
+    heard,
     modes,
     finish: () => finishSpeech?.(),
   };
@@ -146,5 +153,33 @@ describe('VoiceController', () => {
     expect(t.modes()).toEqual(['off']);
     t.controller.pushToTalk();
     expect(t.overlay.at(-1)).toMatchObject({ phase: 'error' });
+  });
+
+  it('reports what was heard only while the mic check is open', async () => {
+    const off = setup({ transcripts: ['Hey Aida, mute'] });
+    await off.say();
+    expect(off.heard).toEqual([]);
+
+    const on = setup({ transcripts: ['so anyway', 'Hey Aida, mute'], monitoring: true });
+    await on.say();
+    await on.say();
+    expect(on.heard.map((h) => [h.text, h.accepted])).toEqual([
+      ['so anyway', false],
+      ['Hey Aida, mute', true],
+    ]);
+    expect(on.heard[0]!.peakDb).toBe(-Infinity);
+  });
+
+  it('the mic check listens with the wake word off, but acts on nothing', async () => {
+    const t = setup({ transcripts: ['Hey Aida, mute'], wakeWord: false, monitoring: true });
+    t.controller.refresh();
+    expect(t.modes().at(-1)).toBe('wake');
+    await t.say();
+    expect(t.commands).toEqual([]);
+    expect(t.heard[0]!.accepted).toBe(false);
+
+    const idle = setup({ transcripts: [], wakeWord: false });
+    idle.controller.refresh();
+    expect(idle.modes().at(-1)).toBe('off');
   });
 });

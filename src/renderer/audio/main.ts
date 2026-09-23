@@ -1,4 +1,9 @@
-import type { AudioCommand, ListenMode } from '@shared/voice';
+import {
+  VAD_THRESHOLDS,
+  type AudioCommand,
+  type ListenMode,
+  type WakeSensitivity,
+} from '@shared/voice';
 import { DEFAULT_SEGMENTER, SpeechSegmenter } from '@shared/speech-segmenter';
 import { Player } from './player';
 import { SileroVad } from './vad';
@@ -13,6 +18,9 @@ const LEVEL_INTERVAL_MS = 66;
 
 let mode: ListenMode = 'off';
 let deviceId: string | null = null;
+let sensitivity: WakeSensitivity = 'normal';
+/** Settings → Mic check is open: report the level all the time, not just while speaking. */
+let meter = false;
 let vad: SileroVad | null = null;
 let stream: MediaStream | null = null;
 let capture: AudioContext | null = null;
@@ -23,9 +31,14 @@ let processing: Promise<void> = Promise.resolve();
 const segmenter = new SpeechSegmenter(DEFAULT_SEGMENTER);
 const player = new Player((id) => voice.sendEvent({ type: 'playback-finished', id }));
 
-function segmenterFor(m: ListenMode) {
-  // Commands allow longer pauses mid-sentence than the wake phrase check does.
-  segmenter.configure({ endSilenceMs: m === 'command' ? 800 : 640 });
+function configureSegmenter() {
+  const { positive, negative } = VAD_THRESHOLDS[sensitivity];
+  segmenter.configure({
+    // Commands allow longer pauses mid-sentence than the wake phrase check does.
+    endSilenceMs: mode === 'command' ? 800 : 640,
+    positiveThreshold: positive,
+    negativeThreshold: negative,
+  });
 }
 
 async function openMic(): Promise<void> {
@@ -74,7 +87,7 @@ async function onFrame(frame: Float32Array): Promise<void> {
   const probability = await vad.probability(frame);
   const event = segmenter.push(frame, probability);
 
-  if (mode === 'command' || segmenter.isSpeaking) {
+  if (meter || mode === 'command' || segmenter.isSpeaking) {
     const now = performance.now();
     if (now - lastLevelAt > LEVEL_INTERVAL_MS) {
       lastLevelAt = now;
@@ -116,13 +129,20 @@ async function ensureVad(): Promise<boolean> {
   }
 }
 
-async function applyConfig(next: ListenMode, nextDevice: string | null): Promise<void> {
+async function applyConfig(
+  next: ListenMode,
+  nextDevice: string | null,
+  nextSensitivity: WakeSensitivity,
+  nextMeter: boolean,
+): Promise<void> {
   if (next !== 'off' && !(await ensureVad())) next = 'off';
   const deviceChanged = nextDevice !== deviceId;
   const wasOpen = mode !== 'off';
   mode = next;
   deviceId = nextDevice;
-  segmenterFor(mode);
+  sensitivity = nextSensitivity;
+  meter = nextMeter;
+  configureSegmenter();
   window.clearTimeout(commandTimer);
   if (mode === 'off') {
     closeMic();
@@ -139,7 +159,7 @@ async function applyConfig(next: ListenMode, nextDevice: string | null): Promise
 voice.onCommand((command: AudioCommand) => {
   switch (command.type) {
     case 'config':
-      void applyConfig(command.mode, command.deviceId);
+      void applyConfig(command.mode, command.deviceId, command.sensitivity, command.meter);
       break;
     case 'play':
       player.play(command.id, command.samples, command.sampleRate);

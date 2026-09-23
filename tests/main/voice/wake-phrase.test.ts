@@ -13,6 +13,13 @@ describe('matchWakePhrase', () => {
     ['Hey Aida.', ''],
     ['Aida', ''],
     ['Hey, Ida, mute', 'mute'],
+    // Close misspellings after a greeting, and greeting + name run together.
+    ['Hey Aita, next song.', 'next song.'],
+    ['Hey Aiden, what time is it?', 'what time is it?'],
+    ['Hey, hey Aida, mute', 'mute'],
+    ['Hayda, open Spotify.', 'open Spotify.'],
+    ['Haida open Spotify', 'open Spotify'],
+    ['Hey-Aida, pause', 'pause'],
   ])('%s → "%s"', (text, command) => {
     expect(matchWakePhrase(text)).toEqual({ command });
   });
@@ -24,9 +31,22 @@ describe('matchWakePhrase', () => {
     'Hey, can you pass the salt?',
     'Adam, come here',
     'Heyday of the empire',
+    'Hey Adam, come here',
+    'Hey, an idea for dinner',
+    'Hey Aria, play something',
+    'Hey dad, look',
+    'Hayden is here',
+    'Aiden, come here',
     '',
   ])('ignores "%s"', (text) => {
     expect(matchWakePhrase(text)).toBeNull();
+  });
+
+  it('only accepts the usual spellings when fuzzy matching is off (low sensitivity)', () => {
+    expect(matchWakePhrase('Hey Aita, mute', { fuzzy: false })).toBeNull();
+    expect(matchWakePhrase('Hey Aiden, mute', { fuzzy: false })).toBeNull();
+    expect(matchWakePhrase('Hayda, mute', { fuzzy: false })).toBeNull();
+    expect(matchWakePhrase('Hey Ada, mute', { fuzzy: false })).toEqual({ command: 'mute' });
   });
 });
 

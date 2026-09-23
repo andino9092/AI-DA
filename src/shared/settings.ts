@@ -28,6 +28,8 @@ export const settingsSchema = z.object({
   voice: z.object({
     /** Listen for "Hey Aida" all the time (speech is transcribed locally, never uploaded). */
     wakeWord: z.boolean(),
+    /** How readily speech counts as "Hey Aida": high suits quiet or distant mics. */
+    wakeSensitivity: z.enum(['low', 'normal', 'high']),
     /** Read replies aloud. */
     speakReplies: z.boolean(),
     /** Kokoro voice id. */
@@ -67,6 +69,7 @@ export const DEFAULT_SETTINGS: Settings = {
   },
   voice: {
     wakeWord: true,
+    wakeSensitivity: 'normal',
     speakReplies: true,
     voice: 'af_heart',
     speed: 1,
