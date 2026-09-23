@@ -7,6 +7,8 @@ export interface TrayActions {
   openPalette(): void;
   setMicrophoneMuted(muted: boolean): void;
   setLaunchAtLogin(enabled: boolean): void;
+  checkForUpdates(): void;
+  installUpdate(): void;
   quit(): void;
 }
 
@@ -16,6 +18,8 @@ interface TrayView {
   paletteShortcut: string | null;
   microphoneMuted: boolean;
   launchAtLogin: boolean;
+  /** Installed builds only: null hides the update menu item. */
+  update?: { label: string; action: 'check' | 'install' | null } | null;
 }
 
 export class TrayController {
@@ -50,7 +54,7 @@ export class TrayController {
   }
 
   private render(): void {
-    const { state, microphoneMuted, launchAtLogin, paletteShortcut } = this.view;
+    const { state, microphoneMuted, launchAtLogin, paletteShortcut, update } = this.view;
     this.tray.setImage(this.icons[state]);
     this.tray.setToolTip(`AI-DA — ${ASSISTANT_STATE_LABELS[state]}`);
     this.tray.setContextMenu(
@@ -75,6 +79,18 @@ export class TrayController {
           checked: launchAtLogin,
           click: (item) => this.actions.setLaunchAtLogin(item.checked),
         },
+        ...(update
+          ? [
+              {
+                label: update.label,
+                enabled: update.action !== null,
+                click: () =>
+                  update.action === 'install'
+                    ? this.actions.installUpdate()
+                    : this.actions.checkForUpdates(),
+              },
+            ]
+          : []),
         { label: 'Quit AI-DA', click: () => this.actions.quit() },
       ]),
     );

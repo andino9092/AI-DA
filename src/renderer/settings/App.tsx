@@ -142,6 +142,16 @@ export function App() {
           onChange={(v) => update({ launchAtLogin: v })}
         />
         <Toggle
+          label="Check for updates automatically"
+          hint={
+            info.isPackaged
+              ? 'Looks for new versions on GitHub every few hours and installs them when you quit.'
+              : 'Only applies to the installed app.'
+          }
+          checked={settings.autoUpdate}
+          onChange={(v) => update({ autoUpdate: v })}
+        />
+        <Toggle
           label="Mute microphone"
           hint="AI-DA won't listen for the wake word while muted."
           checked={settings.microphoneMuted}

@@ -13,6 +13,8 @@ export const settingsSchema = z.object({
   version: z.literal(SETTINGS_VERSION),
   firstRunComplete: z.boolean(),
   launchAtLogin: z.boolean(),
+  /** Installed builds: look for new versions on GitHub every few hours. */
+  autoUpdate: z.boolean(),
   microphoneMuted: z.boolean(),
   /** Absolute path to the folder that holds downloaded models. `null` means the default location. */
   modelsDir: z.string().min(1).nullable(),
@@ -67,6 +69,7 @@ export const DEFAULT_SETTINGS: Settings = {
   version: SETTINGS_VERSION,
   firstRunComplete: false,
   launchAtLogin: true,
+  autoUpdate: true,
   microphoneMuted: false,
   modelsDir: null,
   privacy: { maskContactInfo: false, sensitiveApps: [...DEFAULT_SENSITIVE_APPS] },

@@ -2,7 +2,7 @@
 
 **AI-DA (AI Desktop Assistant)** is a voice-first assistant for Windows that runs from the system tray. It hears you, understands what you mean and acts on your PC: it opens apps, clicks through UI, changes volume and more. It can also be controlled from your phone through Tailscale when you're away from your desk.
 
-Status: **Phases 0–2 complete (voice); next up is Phase 3 (real computer control)** (last updated 2026-09-23).
+Status: **Phase 3 built (real computer control), waiting on live checks; then Phase 4 (Tailscale remote)** (last updated 2026-09-23).
 
 ## Decisions made
 
@@ -137,7 +137,7 @@ More features do **not** make each request slower. A request only runs the modul
 │  └──────────────┬─────────────────────────────────┬────────────────────┘  │
 │                 │ JSON-RPC over stdio              │ (2.1)                 │
 │  ┌──────────────▼──────────────┐     ┌─────────────▼──────────────────┐   │
-│  │ .NET 8 sidecar              │     │ Remote gateway, tailnet only   │   │
+│  │ aida-win.exe (C# sidecar)   │     │ Remote gateway, tailnet only   │   │
 │  │ Core Audio · UI Automation  │     │ phone PWA                      │   │
 │  │ Windows OCR · Win32 windows │     └────────────────────────────────┘   │
 │  └─────────────────────────────┘                                          │
@@ -225,7 +225,7 @@ Target machine: RTX 3070 Ti (8 GB), 32 GB RAM, 100 GB free on C:, and more on D:
 | LLM | `@google/genai` (Gemini Flash-Lite), `groq-sdk` (fallback) |
 | Privacy | In-house `privacy-guard` package (detectors, validators, placeholder vault) |
 | Tools | zod schemas |
-| Native | .NET 8 sidecar: CoreAudio, System.Windows.Automation, Windows.Media.Ocr, Win32 |
+| Native | `aida-win.exe`: C# compiled at build time by the .NET Framework 4.8 compiler that ships with Windows (no SDK). Core Audio, System.Windows.Automation, Windows.Media.Ocr and media sessions (WinRT), Win32, low-level keyboard hook |
 | Storage | Validated JSON files (settings, quota counters), daily JSON Lines logs (actions, outbound requests; 30-day retention), `safeStorage` (keys and sensitive values). SQLite arrives with Memory. |
 | Remote (2.1) | Fastify + WebSocket, Tailscale CLI/LocalAPI, PWA |
 | Quality | Vitest, Playwright for Electron, ESLint + Prettier, GitHub Actions (Windows runner) |
@@ -248,7 +248,7 @@ AI-DA/
 │  ├─ preload/
 │  ├─ renderer/          # audio/ overlay/ settings/
 │  └─ shared/            # types, IPC contracts
-├─ native/win/           # .NET 8 sidecar
+├─ native/aida-win/      # C# sidecar sources (scripts/build-native.mjs)
 ├─ mobile/               # (2.1) phone PWA
 ├─ models/               # wake word, VAD, (downloaded) whisper + kokoro
 └─ resources/
@@ -287,6 +287,15 @@ Each phase ends with something you can run and use.
 - Add UI tree summarization and redaction, confirmation flows, the panic hotkey and the sensitive-app list.
 - Add the installer and auto-update.
 - ✅ *Done when:* "click the Send button in Discord" works, and nothing is read while your password manager is in focus.
+- *Built (2026-09-23):*
+  - **Sidecar:** `aida-win.exe`, compiled from `native/aida-win/*.cs` by `csc.exe` from .NET Framework 4.8 (in every Windows 10/11), so building needs no .NET SDK and the exe is 40 KB. Starts in ~0.1 s (the PowerShell helper took 2–3 s). WinRT (media sessions, OCR) is reached through the `.winmd` files in `System32\WinMetadata` with a hand-written await helper, because the usual `AsTask` helpers need the Windows SDK.
+  - **Media:** Windows media sessions give explicit play/pause per app ("pause Spotify"), "what's playing?", and track names in replies ("Next up: …"). Media keys remain the fallback when no app reports a session.
+  - **Screen tools:** `read_screen` (UI Automation list of controls with #ids, OCR fallback for apps without controls), `click` (by name, #id, or OCR text), `type_text` (optionally into a named field), `press_keys`, `scroll`. Local parsing for "click the send button in discord", "press ctrl shift t", "scroll down".
+  - **Safety:** the sensitive-apps list (Settings → Privacy; defaults cover password managers and "bank"/"checkout"/"password" title words) blocks UI Automation, OCR and window titles for matching windows. Clicks on controls named like Send/Delete/Buy/Sign out, Enter-to-send and closing shortcuts ask first. Tools can ask mid-run once they know what they found. Voice commands are confirmed by voice ("…? Say yes or no"); anything but a clear yes is a no. **Panic key** (Ctrl+Alt+Backspace) stops the running command, queued commands, speech and pending questions.
+  - **Hold-to-talk:** push-to-talk goes through the sidecar's keyboard hook (the key is swallowed so apps don't see it); hold to talk through pauses, or tap then speak as before.
+  - **Replies:** short replies are cached as audio after the first time, and common ones ("Okay.", "Paused.") are prepared at startup.
+  - **Installer:** `npm run dist` → `AI-DA Setup <version>.exe` (149 MB; 500 MB installed, mostly Electron). Native modules are unpacked from asar; unused onnxruntime-web and non-x64 binaries are left out. Auto-update checks GitHub Releases every 6 hours (installed builds, can be turned off) and installs on quit or from the tray.
+  - *Not verified live yet:* clicking in Discord and the password-manager check against real apps, hold-to-talk with a real key press, spoken confirmations, the installed build. The helper's read-only commands were tested against the real desktop (UI Automation listed Spotify's controls in 364 ms; OCR took 116 ms).
 
 **Phase 4: Tailscale remote → v2.1 release**
 - Add Tailscale detection, the tailnet-only gateway, QR pairing and the phone PWA.
@@ -300,16 +309,20 @@ Found while building. Each should be fixed in the phase noted.
 
 | Limitation | Why | Fix (phase) |
 |---|---|---|
-| "Pause" and "play" both press the play/pause toggle, so "pause" starts playback if nothing is playing | Media keys only toggle | Read the playback state through Windows media sessions (GSMTC) and send an explicit play or pause (Phase 3 sidecar) |
-| Commands wait ~2–3 s after startup | The PowerShell helper compiles `AidaWin.cs` on launch | The precompiled .NET sidecar starts instantly (Phase 3) |
+| ~~"Pause" and "play" both press the play/pause toggle~~ | Media keys only toggle | ✅ Fixed in Phase 3: Windows media sessions send an explicit play or pause |
+| ~~Commands wait ~2–3 s after startup~~ | The PowerShell helper compiled `AidaWin.cs` on launch | ✅ Fixed in Phase 3: the precompiled helper starts in ~0.1 s |
 | ~~If another app owns Ctrl+Alt+A, the command box only opens from the tray~~ | Global shortcuts are first come, first served | ✅ Fixed in Phase 2: both shortcuts are rebindable in Settings, which warns when one is taken |
 | ~~The LLM doesn't see commands that ran locally~~ | The instant path skipped the conversation history | ✅ Fixed in Phase 2: instant commands and replies are added (scrubbed) to the history |
-| Spoken replies start 1.1–1.5 s after you stop talking (target: under 1 s) | Kokoro runs at ~0.4× real time on the CPU; DirectML can't run its `ConvTranspose` layers, and the q8 model is slower than real time on Zen 3 CPUs (no VNNI) | Run Kokoro on WebGPU in the audio window, or cache audio for common short replies (Phase 3) |
-| Push-to-talk is "press, then speak" (the voice detector decides when you're done), not "hold while speaking" | Electron global shortcuts only report key presses, not releases | Low-level keyboard hook in the .NET sidecar (Phase 3) |
+| Spoken replies start 1.1–1.5 s after you stop talking (target: under 1 s) | Kokoro runs at ~0.4× real time on the CPU; DirectML can't run its `ConvTranspose` layers, and the q8 model is slower than real time on Zen 3 CPUs (no VNNI) | Partly fixed in Phase 3: short replies are cached and common ones prepared at startup. Still to do: run Kokoro on WebGPU in the audio window for new sentences (Later) |
+| ~~Push-to-talk is "press, then speak", not "hold while speaking"~~ | Electron global shortcuts only report key presses | ✅ Fixed in Phase 3: the helper's keyboard hook reports key-up |
 | While "Hey Aida" listening is on, all nearby speech is transcribed on the GPU (locally, then discarded) | The wake word is a Whisper phrase check, not a dedicated detector | Optional trained openWakeWord model as a cheap first gate (Later) |
 | "Hey Aida" is hard to catch over loud music or video from speakers | Echo cancellation only removes AI-DA's own audio, not Spotify or games | Use a headset mic, or push-to-talk. Later: echo cancellation using the system's audio output as a reference (sidecar loopback capture) |
 | Voice is English only | whisper-server is started with `-l en` | Language setting (Later: multi-language) |
-| The installer must unpack native modules (onnxruntime-node) from the asar archive | Native `.node` files can't load from inside asar | `asarUnpack` in electron-builder config (Phase 3 installer) |
+| ~~The installer must unpack native modules from the asar archive~~ | Native `.node` files can't load from inside asar | ✅ Fixed in Phase 3 (`asarUnpack` for onnxruntime-node and sharp) |
+| Auto-update only works once releases are published | electron-updater reads `latest.yml` from GitHub Releases | Publish with `npx electron-builder --win --publish always` (needs `GH_TOKEN`); the repo's releases must be public |
+| The installer isn't code-signed | No signing certificate | Windows SmartScreen shows "unknown publisher" on first install. A certificate (or Azure Trusted Signing) fixes it (Later) |
+| Media sessions name browsers by an id, so replies say "your browser" | Chromium reports a hashed app id | Map ids to browser names through the Start-menu index (Later) |
+| Per-app volume and output-device switching (MVP item 7) aren't built yet | Phase 3 focused on UI control and safety | Add to the helper's Core Audio code (next) |
 
 ## Risks and how they're handled
 

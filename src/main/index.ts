@@ -13,6 +13,7 @@ import { PrivacyGuard } from './privacy/guard';
 import { SensitiveValueStore } from './privacy/sensitive-values';
 import { SidecarWindowsBridge } from './native/win-host';
 import { acceleratorToBinding } from './app/hotkeys';
+import { Updater, type UpdateState } from './app/updater';
 import { AppIndex } from './tools/apps/app-index';
 import { appTools } from './tools/apps/tools';
 import { audioTools } from './tools/system/audio';
@@ -222,6 +223,8 @@ function start(): void {
       openPalette: () => void palette.toggle(),
       setMicrophoneMuted: (muted) => settings.update({ microphoneMuted: muted }),
       setLaunchAtLogin: (enabled) => settings.update({ launchAtLogin: enabled }),
+      checkForUpdates: () => void updater.check(),
+      installUpdate: () => updater.installNow(),
       quit: () => app.quit(),
     },
     {
@@ -233,6 +236,27 @@ function start(): void {
         : null,
     },
   );
+
+  const updateMenu = (state: UpdateState) => {
+    switch (state.status) {
+      case 'checking':
+        return { label: 'Checking for updates…', action: null };
+      case 'downloading':
+        return { label: `Downloading update ${state.version}…`, action: null };
+      case 'ready':
+        return { label: `Restart to update to ${state.version}`, action: 'install' as const };
+      default:
+        return { label: 'Check for updates', action: 'check' as const };
+    }
+  };
+  const updater = new Updater(
+    () => settings.get().autoUpdate,
+    (state) => tray.update({ update: updateMenu(state) }),
+  );
+  if (updater.supported) {
+    tray.update({ update: updateMenu({ status: 'idle' }) });
+    updater.start();
+  }
 
   registerIpc({
     settings,
@@ -303,6 +327,7 @@ function start(): void {
   voice.start();
 
   app.on('will-quit', () => {
+    updater.dispose();
     globalShortcut.unregisterAll();
     confirmBroker.cancelAll();
     models.cancelAll();

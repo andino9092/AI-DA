@@ -6,9 +6,24 @@ directories:
 files:
   - out/**
   - package.json
+  # The pages bundle their own copy of onnxruntime-web; the main process uses onnxruntime-node.
+  - '!**/node_modules/onnxruntime-web/**'
+  - '!**/node_modules/@huggingface/transformers/dist/{*.wasm,ort-*,transformers.js*,transformers.min.js*,transformers.web*}'
+  # Windows x64 only.
+  - '!**/node_modules/onnxruntime-node/bin/napi-v*/{darwin,linux}/**'
+  - '!**/node_modules/onnxruntime-node/bin/napi-v*/win32/arm64/**'
+  - '!**/*.{map,md}'
+# Native .node files and their DLLs can't load from inside app.asar.
+asarUnpack:
+  - '**/node_modules/onnxruntime-node/**'
+  - '**/node_modules/sharp/**'
+  - '**/node_modules/@img/**'
 extraResources:
+  # Tray icons and the Windows helper (aida-win.exe, built by scripts/build-native.mjs).
   - from: resources
     to: resources
+    filter:
+      - '**/*'
 win:
   target: nsis
   icon: build/icon.png
@@ -18,6 +33,8 @@ nsis:
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: false
   runAfterFinish: true
+  # Downloaded speech models live in %APPDATA%\AI-DA and are kept on uninstall.
+  deleteAppDataOnUninstall: false
 publish:
   provider: github
   owner: andino9092

@@ -96,7 +96,13 @@ export class VoiceService {
         .catch((err: unknown) => console.error('[AI-DA] speech recognition:', err));
     }
     if (models.isReady('kokoro'))
-      void this.tts.start().catch((err: unknown) => console.error('[AI-DA] voice:', err));
+      void this.tts
+        .start()
+        .then(() => {
+          const { voice, speed } = this.deps.settings().voice;
+          return this.tts.prewarm({ voice, speed });
+        })
+        .catch((err: unknown) => console.error('[AI-DA] voice:', err));
     this.controller.refresh();
   }
 
