@@ -1,5 +1,6 @@
-import { app, globalShortcut, safeStorage, shell } from 'electron';
+import { app, globalShortcut, safeStorage, session, shell } from 'electron';
 import { spawn } from 'node:child_process';
+import type { AssistantState } from '@shared/assistant';
 import { SettingsStore } from './settings/store';
 import { SecretVault } from './secrets/vault';
 import { TrayController } from './app/tray';
@@ -24,6 +25,8 @@ import { QuotaTracker } from './router/quota';
 import { LlmRouter } from './router/router';
 import { createProviderSource } from './providers/llm/factory';
 import { Assistant } from './agent/assistant';
+import { ModelManager } from './models/model-manager';
+import { VoiceService } from './voice/voice-service';
 
 // One AI-DA per user. A second launch just brings up settings in the running instance.
 if (!app.requestSingleInstanceLock()) {
@@ -47,6 +50,7 @@ function start(): void {
   const settings = new SettingsStore(paths.settingsFile());
   const vault = new SecretVault(paths.vaultFile(), safeStorage);
   const sensitive = new SensitiveValueStore(paths.sensitiveValuesFile(), safeStorage);
+  const models = new ModelManager(() => settings.get().modelsDir ?? paths.defaultModelsDir());
 
   // Privacy first: everything that leaves the PC goes through this guard.
   const guard = new PrivacyGuard(() => ({
@@ -98,22 +102,69 @@ function start(): void {
     emit: (event) => palette.send(event),
   });
 
-  let shortcutRegistered = false;
-  const registerShortcut = (accelerator: string) => {
-    globalShortcut.unregisterAll();
-    try {
-      shortcutRegistered = globalShortcut.register(accelerator, () => void palette.toggle());
-    } catch {
-      shortcutRegistered = false;
-    }
+  // Tray state: voice activity wins, then typed commands, then idle/muted.
+  let voiceState: AssistantState | null = null;
+  let running = 0;
+  const trayState = (): AssistantState =>
+    voiceState ?? (running > 0 ? 'thinking' : settings.get().microphoneMuted ? 'muted' : 'idle');
+
+  // Commands run one at a time, in the order they were given (typed or spoken).
+  let queue: Promise<unknown> = Promise.resolve();
+  const runCommand = (text: string, source: 'palette' | 'voice', activeWindow: number | null) => {
+    const task = queue.then(async () => {
+      running++;
+      tray.update({ state: trayState() });
+      try {
+        return await assistant.handle(text, { source, activeWindow });
+      } finally {
+        running--;
+        tray.update({ state: trayState() });
+      }
+    });
+    queue = task.catch(() => {});
+    return task;
   };
-  registerShortcut(settings.get().shortcuts.palette);
+
+  const voice = new VoiceService({
+    settings: () => settings.get(),
+    models,
+    handleCommand: (text, activeWindow) => runCommand(text, 'voice', activeWindow),
+    foregroundWindow: () => win.foregroundWindow(),
+    setState: (state) => {
+      voiceState = state;
+      tray.update({ state: trayState() });
+    },
+  });
+
+  // Only the hidden audio window may use the microphone.
+  session.defaultSession.setPermissionRequestHandler((contents, permission, callback) => {
+    callback(permission === 'media' && contents.id === voice.audio.webContentsId);
+  });
+  session.defaultSession.setPermissionCheckHandler((contents, permission) => {
+    if (permission !== 'media') return false;
+    const url = contents?.getURL() ?? '';
+    const devUrl = process.env['ELECTRON_RENDERER_URL'];
+    return url.startsWith('file://') || (!!devUrl && url.startsWith(devUrl));
+  });
+
+  const shortcutStatus = { palette: false, pushToTalk: false };
+  const registerShortcuts = () => {
+    globalShortcut.unregisterAll();
+    const { palette: paletteKey, pushToTalk } = settings.get().shortcuts;
+    const register = (accelerator: string, fn: () => void) => {
+      try {
+        return globalShortcut.register(accelerator, fn);
+      } catch {
+        return false;
+      }
+    };
+    shortcutStatus.palette = register(paletteKey, () => void palette.toggle());
+    shortcutStatus.pushToTalk = register(pushToTalk, () => voice.pushToTalk());
+  };
+  registerShortcuts();
 
   const initial = settings.get();
   applyLaunchAtLogin(initial.launchAtLogin);
-
-  let running = 0;
-  let queue: Promise<unknown> = Promise.resolve();
 
   const tray = new TrayController(
     {
@@ -124,29 +175,36 @@ function start(): void {
       quit: () => app.quit(),
     },
     {
-      state: initial.microphoneMuted ? 'muted' : 'idle',
+      state: trayState(),
       microphoneMuted: initial.microphoneMuted,
       launchAtLogin: initial.launchAtLogin,
-      paletteShortcut: shortcutRegistered ? displayAccelerator(initial.shortcuts.palette) : null,
+      paletteShortcut: shortcutStatus.palette
+        ? displayAccelerator(initial.shortcuts.palette)
+        : null,
     },
   );
-
-  const idleState = () => (settings.get().microphoneMuted ? 'muted' : 'idle');
 
   registerIpc({
     settings,
     vault,
     sensitive,
     logsDir: paths.logsDir(),
-    appInfo: () => ({
-      version: app.getVersion(),
-      isPackaged: app.isPackaged,
-      defaultModelsDir: paths.defaultModelsDir(),
-      paletteShortcut: {
-        accelerator: displayAccelerator(settings.get().shortcuts.palette),
-        registered: shortcutRegistered,
-      },
-    }),
+    appInfo: () => {
+      const { shortcuts } = settings.get();
+      return {
+        version: app.getVersion(),
+        isPackaged: app.isPackaged,
+        defaultModelsDir: paths.defaultModelsDir(),
+        paletteShortcut: {
+          accelerator: shortcuts.palette,
+          registered: shortcutStatus.palette,
+        },
+        pushToTalkShortcut: {
+          accelerator: shortcuts.pushToTalk,
+          registered: shortcutStatus.pushToTalk,
+        },
+      };
+    },
     usage: () => {
       const { llm } = settings.get();
       return (['gemini', 'groq'] as const).map((id) =>
@@ -154,44 +212,46 @@ function start(): void {
       );
     },
     palette: {
-      // Commands run one at a time, in the order they were typed.
-      submit: (text) => {
-        const task = queue.then(async () => {
-          running++;
-          tray.update({ state: 'thinking' });
-          try {
-            await assistant.handle(text, {
-              source: 'palette',
-              activeWindow: palette.activeWindowHandle,
-            });
-          } finally {
-            running--;
-            if (running === 0) tray.update({ state: idleState() });
-          }
-        });
-        queue = task.catch(() => {});
-        return task;
+      submit: async (text) => {
+        await runCommand(text, 'palette', palette.activeWindowHandle);
       },
       confirm: (id, approved) => confirmBroker.resolve(id, approved),
       hide: () => palette.hide(),
+    },
+    models: {
+      status: () => models.status(),
+      install: async () => {
+        await models.installAll();
+        voice.start();
+      },
+      onChanged: (listener) => models.on('changed', listener),
+    },
+    voice: {
+      vadModel: () => voice.vadModel(),
+      isAudioWindow: (id) => id === voice.audio.webContentsId,
+      test: () => voice.test(),
     },
   });
 
   settings.on('changed', (next, previous) => {
     if (next.launchAtLogin !== previous.launchAtLogin) applyLaunchAtLogin(next.launchAtLogin);
-    if (next.shortcuts.palette !== previous.shortcuts.palette)
-      registerShortcut(next.shortcuts.palette);
+    if (JSON.stringify(next.shortcuts) !== JSON.stringify(previous.shortcuts)) registerShortcuts();
+    voice.refresh();
     tray.update({
-      state: running > 0 ? 'thinking' : next.microphoneMuted ? 'muted' : 'idle',
+      state: trayState(),
       microphoneMuted: next.microphoneMuted,
       launchAtLogin: next.launchAtLogin,
-      paletteShortcut: shortcutRegistered ? displayAccelerator(next.shortcuts.palette) : null,
+      paletteShortcut: shortcutStatus.palette ? displayAccelerator(next.shortcuts.palette) : null,
     });
   });
+
+  voice.start();
 
   app.on('will-quit', () => {
     globalShortcut.unregisterAll();
     confirmBroker.cancelAll();
+    models.cancelAll();
+    voice.dispose();
     win.dispose();
     tray.destroy();
   });

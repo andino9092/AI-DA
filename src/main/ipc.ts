@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { IPC, type AppInfo, type SaveSecretResult } from '@shared/ipc';
 import type { ProviderUsage } from '@shared/llm';
 import type { AddSensitiveValueResult } from '@shared/privacy';
+import type { ModelStatus } from '@shared/models';
 import { settingsPatchSchema } from '@shared/settings';
 import type { SettingsStore } from './settings/store';
 import type { SecretVault } from './secrets/vault';
@@ -21,6 +22,16 @@ interface Deps {
     submit(text: string): Promise<void>;
     confirm(confirmId: string, approved: boolean): void;
     hide(): void;
+  };
+  models: {
+    status(): ModelStatus[];
+    install(): Promise<void>;
+    onChanged(listener: (status: ModelStatus[]) => void): void;
+  };
+  voice: {
+    vadModel(): Promise<Uint8Array>;
+    isAudioWindow(webContentsId: number): boolean;
+    test(): Promise<{ ok: boolean; error?: string }>;
   };
 }
 
@@ -57,6 +68,8 @@ export function registerIpc({
   usage,
   logsDir,
   palette,
+  models,
+  voice,
 }: Deps): void {
   handle(IPC.settingsGet, () => settings.get());
   handle(IPC.settingsUpdate, (_e, patch) => settings.update(settingsPatchSchema.parse(patch)));
@@ -123,4 +136,18 @@ export function registerIpc({
     palette.confirm(z.string().parse(id), z.boolean().parse(approved)),
   );
   handle(IPC.paletteHide, () => palette.hide());
+
+  handle(IPC.modelsStatus, () => models.status());
+  handle(IPC.modelsInstall, () => models.install());
+  models.onChanged((status) => {
+    for (const win of BrowserWindow.getAllWindows())
+      win.webContents.send(IPC.modelsChanged, status);
+  });
+
+  handle(IPC.voiceVadModel, (event) => {
+    if (!voice.isAudioWindow(event.sender.id))
+      throw new Error('Only the audio window loads the voice detector.');
+    return voice.vadModel();
+  });
+  handle(IPC.voiceTest, () => voice.test());
 }

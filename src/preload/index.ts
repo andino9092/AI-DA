@@ -32,6 +32,19 @@ const api: AidaApi = {
     openExternal: (url) => ipcRenderer.invoke(IPC.openExternal, url),
     openLogs: () => ipcRenderer.invoke(IPC.openLogs),
   },
+  models: {
+    status: () => ipcRenderer.invoke(IPC.modelsStatus),
+    install: () => ipcRenderer.invoke(IPC.modelsInstall),
+    onChanged: (listener) => subscribe(IPC.modelsChanged, listener),
+  },
+  voice: {
+    onCommand: (listener) => subscribe(IPC.voiceCommand, listener),
+    sendEvent: (event) => ipcRenderer.send(IPC.voiceEvent, event),
+    sendUtterance: (utterance) => ipcRenderer.send(IPC.voiceUtterance, utterance),
+    getVadModel: () => ipcRenderer.invoke(IPC.voiceVadModel),
+    onOverlay: (listener) => subscribe(IPC.overlayState, listener),
+    test: () => ipcRenderer.invoke(IPC.voiceTest),
+  },
   palette: {
     submit: (text) => ipcRenderer.invoke(IPC.paletteSubmit, text),
     confirm: (confirmId, approved) => ipcRenderer.invoke(IPC.paletteConfirm, confirmId, approved),

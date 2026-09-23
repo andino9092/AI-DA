@@ -103,6 +103,19 @@ describe('Assistant: instant path', () => {
     expect(t.win.actions).toEqual([]);
   });
 
+  it('keeps locally run commands in the history for follow-ups', async () => {
+    const gemini = new FakeProvider('gemini', [{ text: 'Sure.', toolCalls: [] }]);
+    const t = setup({ providers: [gemini] });
+    await t.run('open spotify');
+    await t.run('and make it quieter than usual');
+    const messages = gemini.requests[0]!.messages;
+    expect(messages.slice(0, 2)).toEqual([
+      { role: 'user', text: 'open spotify' },
+      { role: 'assistant', text: 'Opening Spotify.' },
+    ]);
+    expect(messages.at(-1)).toEqual({ role: 'user', text: 'and make it quieter than usual' });
+  });
+
   it('falls back to the LLM when the instant guess finds no app', async () => {
     const gemini = new FakeProvider('gemini', [
       {

@@ -1,4 +1,6 @@
 import type { AssistantEvent } from './assistant';
+import type { ModelStatus } from './models';
+import type { AudioCommand, AudioEvent, OverlayState, Utterance } from './voice';
 import type { ProviderUsage } from './llm';
 import type { AddSensitiveValueResult, SensitiveValueSummary } from './privacy';
 import type { Settings, SettingsPatch } from './settings';
@@ -25,6 +27,15 @@ export const IPC = {
   paletteHide: 'palette:hide',
   paletteShown: 'palette:shown',
   assistantEvent: 'assistant:event',
+  voiceCommand: 'voice:command',
+  voiceEvent: 'voice:event',
+  voiceUtterance: 'voice:utterance',
+  voiceVadModel: 'voice:vad-model',
+  voiceTest: 'voice:test',
+  overlayState: 'overlay:state',
+  modelsStatus: 'models:status',
+  modelsInstall: 'models:install',
+  modelsChanged: 'models:changed',
 } as const;
 
 export interface AppInfo {
@@ -33,6 +44,7 @@ export interface AppInfo {
   defaultModelsDir: string;
   /** Whether the command-box shortcut was registered (another app may own it). */
   paletteShortcut: { accelerator: string; registered: boolean };
+  pushToTalkShortcut: { accelerator: string; registered: boolean };
 }
 
 export type SaveSecretResult =
@@ -63,6 +75,22 @@ export interface AidaApi {
     chooseFolder(defaultPath?: string): Promise<string | null>;
     openExternal(url: string): Promise<void>;
     openLogs(): Promise<void>;
+  };
+  models: {
+    status(): Promise<ModelStatus[]>;
+    install(): Promise<void>;
+    onChanged(listener: (status: ModelStatus[]) => void): () => void;
+  };
+  voice: {
+    /** Hidden audio window: commands from the main process. */
+    onCommand(listener: (command: AudioCommand) => void): () => void;
+    sendEvent(event: AudioEvent): void;
+    sendUtterance(utterance: Utterance): void;
+    getVadModel(): Promise<Uint8Array>;
+    /** Overlay window. */
+    onOverlay(listener: (state: OverlayState) => void): () => void;
+    /** Settings: speak a sample sentence with the current voice. */
+    test(): Promise<{ ok: boolean; error?: string }>;
   };
   palette: {
     submit(text: string): Promise<void>;

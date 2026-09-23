@@ -3,7 +3,7 @@
 **AI Desktop Assistant**: a voice-first, privacy-first assistant that lives in the Windows system tray. It can open apps, click through UI, control volume and more, and it keeps sensitive information on your PC.
 
 > v2 is a ground-up rewrite. See [PLAN.md](PLAN.md) for the architecture, features and roadmap.
-> **Current phase: 1 done (text-mode brain).** Press **Ctrl+Alt+A** anywhere to type a command. Simple ones (volume, media, apps, windows) run locally; anything else goes to a free AI provider, with sensitive information masked first.
+> **Current phase: 2 done (voice).** Say “Hey Aida, …”, press **Ctrl+Alt+V** to talk, or **Ctrl+Alt+A** to type. Wake-word checking, speech recognition and the voice all run locally; download the voice models in Settings → Voice (~2 GB).
 
 ## Development
 

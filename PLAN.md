@@ -2,7 +2,7 @@
 
 **AI-DA (AI Desktop Assistant)** is a voice-first assistant for Windows that runs from the system tray. It hears you, understands what you mean and acts on your PC: it opens apps, clicks through UI, changes volume and more. It can also be controlled from your phone through Tailscale when you're away from your desk.
 
-Status: **Phases 0–1 complete (text-mode brain); next up is Phase 2 (voice)** (last updated 2026-09-23).
+Status: **Phases 0–2 complete (voice); next up is Phase 3 (real computer control)** (last updated 2026-09-23).
 
 ## Decisions made
 
@@ -37,9 +37,9 @@ Fallbacks are **not steps in the chain**. They're only tried when the primary fa
 
 | Stage | Primary | Only if that fails |
 |---|---|---|
-| Speech-to-text | whisper.cpp `large-v3-turbo` on GPU (local) | Local Whisper on CPU. Groq Whisper is opt-in and sends raw audio off the PC. |
+| Speech-to-text | whisper.cpp `large-v3-turbo` q5 on GPU (local, CUDA 12.4 build, ~150 ms per utterance) | Local Whisper on CPU. Groq Whisper is opt-in and sends raw audio off the PC. |
 | Brain | Gemini `gemini-3.5-flash-lite` (~500 free req/day) | Groq `qwen/qwen3.8-27b` (~1,000 free req/day; supports parallel tool calls) |
-| Text-to-speech | Kokoro (local) | Windows built-in SAPI voice |
+| Text-to-speech | Kokoro 82M fp32 on CPU (local, ~0.4× real time) | Reply shown in the status pill |
 
 ---
 
@@ -197,12 +197,12 @@ Target machine: RTX 3070 Ti (8 GB), 32 GB RAM, 100 GB free on C:, and more on D:
 | Component | Disk | While running |
 |---|---|---|
 | openWakeWord ("Hey Aida") + Silero VAD | ~5 MB | ~50 MB RAM |
-| Whisper `large-v3-turbo` (q5 default, f16 optional) | ~550 MB / ~1.6 GB | ~1–2 GB VRAM |
-| whisper.cpp CUDA runtime | ~500–700 MB | — |
-| Kokoro-82M + voices | ~90–330 MB | ~300–500 MB RAM (CPU) |
+| Whisper `large-v3-turbo` q5 | 574 MB | ~1 GB VRAM (measured) |
+| whisper.cpp CUDA 12.4 runtime (incl. cuBLAS; zip deleted after unpacking) | ~1.2 GB | — |
+| Kokoro-82M fp32 (voices ship inside the app, 28 MB) | 326 MB | ~500 MB RAM (CPU) |
 | .NET sidecar | ~30–70 MB | ~50 MB RAM |
 | Electron app | ~300 MB | ~200–300 MB RAM |
-| **MVP total** | **~1.5–3 GB** | **~1–2 GB VRAM, ~1 GB RAM** |
+| **MVP total** | **~2.0 GB measured** (models folder) | **~1 GB VRAM, ~1 GB RAM** |
 | *Later:* local vision model (Ollama) | +4–8 GB | 4–6 GB VRAM, loaded only when needed |
 | *Later:* offline LLM | +5–9 GB | shares VRAM with the vision model |
 
@@ -271,12 +271,14 @@ Each phase ends with something you can run and use.
 - ✅ *Done when:* typing "open spotify and set volume to 30" works, and typing a fake card number shows `[CARD_1]` in the outbound log.
 - *Built:* Windows control runs through a long-lived Windows PowerShell process that compiles `resources/native/AidaWin.cs` once (Core Audio volume, media keys, window management, Start-menu app list). Phase 3's .NET sidecar replaces it behind the same `WindowsBridge` interface.
 
-**Phase 2: Voice**
+**Phase 2: Voice** ✅ *(done 2026-09-23)*
 - Build the audio window, then add VAD, push-to-talk, whisper.cpp, Kokoro with streaming and barge-in.
 - Train and integrate the "Hey Aida" wake word.
 - Build the overlay.
 - Measure the latency budget and add it to CI as a benchmark.
 - ✅ *Done when:* "Hey Aida, pause the music" works hands-free in under 1 s.
+- *Built:* **Wake word = Whisper phrase check** (decided 2026-09-23): Silero VAD cuts speech into utterances, local Whisper transcribes them, and only text starting with "Hey Aida"/"Aida," is acted on; everything else is dropped unlogged. No training needed; a trained openWakeWord model can be added later to save GPU. Push-to-talk is **Ctrl+Alt+V** (Ctrl+Alt+Space was taken on this PC); both shortcuts are rebindable in Settings. Barge-in: push-to-talk or "Hey Aida, stop". A question from Aida opens the mic for the answer. Models download in Settings → Voice with pinned SHA-256s.
+- *Measured (injected clip, not a live mic):* end of speech → reply text 0.4–0.7 s, → first audio 1.1–1.5 s. Misses the 1 s target because Kokoro runs on the CPU (see backlog). Latency isn't in CI: CI runners have no GPU.
 
 **Phase 3: Real computer control → v2.0 release**
 - Build the .NET sidecar (Core Audio, UI Automation, OCR, windows) and replace the temporary PowerShell tools.
@@ -289,6 +291,22 @@ Each phase ends with something you can run and use.
 - ✅ *Done when:* you can pause music and lock the PC from your phone on cellular data.
 
 **After that:** pick features from the "Later" list one at a time.
+
+## Known limitations (backlog)
+
+Found while building. Each should be fixed in the phase noted.
+
+| Limitation | Why | Fix (phase) |
+|---|---|---|
+| "Pause" and "play" both press the play/pause toggle, so "pause" starts playback if nothing is playing | Media keys only toggle | Read the playback state through Windows media sessions (GSMTC) and send an explicit play or pause (Phase 3 sidecar) |
+| Commands wait ~2–3 s after startup | The PowerShell helper compiles `AidaWin.cs` on launch | The precompiled .NET sidecar starts instantly (Phase 3) |
+| ~~If another app owns Ctrl+Alt+A, the command box only opens from the tray~~ | Global shortcuts are first come, first served | ✅ Fixed in Phase 2: both shortcuts are rebindable in Settings, which warns when one is taken |
+| ~~The LLM doesn't see commands that ran locally~~ | The instant path skipped the conversation history | ✅ Fixed in Phase 2: instant commands and replies are added (scrubbed) to the history |
+| Spoken replies start 1.1–1.5 s after you stop talking (target: under 1 s) | Kokoro runs at ~0.4× real time on the CPU; DirectML can't run its `ConvTranspose` layers, and the q8 model is slower than real time on Zen 3 CPUs (no VNNI) | Run Kokoro on WebGPU in the audio window, or cache audio for common short replies (Phase 3) |
+| Push-to-talk is "press, then speak" (the voice detector decides when you're done), not "hold while speaking" | Electron global shortcuts only report key presses, not releases | Low-level keyboard hook in the .NET sidecar (Phase 3) |
+| While "Hey Aida" listening is on, all nearby speech is transcribed on the GPU (locally, then discarded) | The wake word is a Whisper phrase check, not a dedicated detector | Optional trained openWakeWord model as a cheap first gate (Later) |
+| Voice is English only | whisper-server is started with `-l en` | Language setting (Later: multi-language) |
+| The installer must unpack native modules (onnxruntime-node) from the asar archive | Native `.node` files can't load from inside asar | `asarUnpack` in electron-builder config (Phase 3 installer) |
 
 ## Risks and how they're handled
 

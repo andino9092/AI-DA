@@ -6,6 +6,8 @@ import { Button, Section, Toggle } from './components';
 import { SecretRow } from './SecretRow';
 import { PrivacySection } from './PrivacySection';
 import { UsageSection } from './UsageSection';
+import { VoiceSection } from './VoiceSection';
+import { ShortcutInput } from './ShortcutInput';
 
 export function App() {
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -22,7 +24,11 @@ export function App() {
       setSecrets(sec);
       setInfo(i);
     });
-    return window.aida.settings.onChanged(setSettings);
+    // Shortcut registration status lives in app info, so refresh it with every settings change.
+    return window.aida.settings.onChanged((next) => {
+      setSettings(next);
+      void window.aida.app.info().then(setInfo);
+    });
   }, []);
 
   if (!settings || !secrets || !info) return null;
@@ -90,6 +96,8 @@ export function App() {
         ))}
       </Section>
 
+      <VoiceSection settings={settings} info={info} update={update} />
+
       <UsageSection settings={settings} />
 
       <PrivacySection settings={settings} update={update} />
@@ -99,14 +107,15 @@ export function App() {
           <div>
             <div className="text-sm">Command box</div>
             <div className="text-xs text-zinc-500 dark:text-zinc-400">
-              {info.paletteShortcut.registered
-                ? 'Type a command from anywhere. Voice arrives in the next update.'
-                : 'This shortcut is taken by another app, so use the tray menu instead.'}
+              Type a command from anywhere.
             </div>
           </div>
-          <kbd className="rounded-md border border-zinc-300 px-2 py-1 text-xs dark:border-zinc-700">
-            {info.paletteShortcut.accelerator}
-          </kbd>
+          <ShortcutInput
+            label="Command box"
+            value={settings.shortcuts.palette}
+            registered={info.paletteShortcut.registered}
+            onChange={(palette) => update({ shortcuts: { ...settings.shortcuts, palette } })}
+          />
         </div>
         <Toggle
           label="Launch at login"

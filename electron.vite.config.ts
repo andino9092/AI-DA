@@ -8,6 +8,15 @@ const alias = { '@shared': resolve(__dirname, 'src/shared') };
 export default defineConfig({
   main: {
     resolve: { alias },
+    build: {
+      rollupOptions: {
+        input: {
+          index: resolve(__dirname, 'src/main/index.ts'),
+          // Runs in its own utility process so speech synthesis never blocks the app.
+          'tts-worker': resolve(__dirname, 'src/main/voice/tts-worker.ts'),
+        },
+      },
+    },
   },
   preload: {
     resolve: { alias },
@@ -22,6 +31,8 @@ export default defineConfig({
         input: {
           settings: resolve(__dirname, 'src/renderer/settings/index.html'),
           palette: resolve(__dirname, 'src/renderer/palette/index.html'),
+          audio: resolve(__dirname, 'src/renderer/audio/index.html'),
+          overlay: resolve(__dirname, 'src/renderer/overlay/index.html'),
         },
       },
     },

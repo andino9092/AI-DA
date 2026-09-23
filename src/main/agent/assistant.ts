@@ -76,6 +76,8 @@ export class Assistant {
         const results = await this.runInstant(planned, ctx);
         if (results) {
           log.write({ type: 'route', requestId, route: 'instant' });
+          // Keep local commands in the history so follow-ups ("and make it louder") make sense.
+          conversation.messages.push({ role: 'user', text: scrubbed.text });
           return this.reply(requestId, conversation, results.map((r) => r.speak).join(' '), true);
         }
       }

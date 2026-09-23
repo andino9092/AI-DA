@@ -25,9 +25,24 @@ export const settingsSchema = z.object({
     gemini: providerSettingsSchema,
     groq: providerSettingsSchema,
   }),
+  voice: z.object({
+    /** Listen for "Hey Aida" all the time (speech is transcribed locally, never uploaded). */
+    wakeWord: z.boolean(),
+    /** Read replies aloud. */
+    speakReplies: z.boolean(),
+    /** Kokoro voice id. */
+    voice: z.string().min(1),
+    speed: z.number().min(0.7).max(1.4),
+    /** Show the small status pill while listening, thinking and speaking. */
+    showOverlay: z.boolean(),
+    /** Microphone to use; null means the Windows default. */
+    inputDeviceId: z.string().min(1).nullable(),
+  }),
   shortcuts: z.object({
     /** Electron accelerator for the command box. */
     palette: z.string().min(1),
+    /** Starts listening for a command right away (and stops Aida talking). */
+    pushToTalk: z.string().min(1),
   }),
 });
 
@@ -50,5 +65,13 @@ export const DEFAULT_SETTINGS: Settings = {
     gemini: { model: 'gemini-3.5-flash-lite', dailyLimit: 450 },
     groq: { model: 'qwen/qwen3.8-27b', dailyLimit: 900 },
   },
-  shortcuts: { palette: 'Control+Alt+A' },
+  voice: {
+    wakeWord: true,
+    speakReplies: true,
+    voice: 'af_heart',
+    speed: 1,
+    showOverlay: true,
+    inputDeviceId: null,
+  },
+  shortcuts: { palette: 'Control+Alt+A', pushToTalk: 'Control+Alt+V' },
 };

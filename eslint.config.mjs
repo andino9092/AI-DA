@@ -13,10 +13,17 @@ export default tseslint.config(
       'src/main/**/*.ts',
       'src/preload/**/*.ts',
       'tests/**/*.ts',
-      'scripts/**/*.cjs',
+      'scripts/**/*.{cjs,mjs}',
       '*.config.{ts,mjs}',
     ],
     languageOptions: { globals: globals.node },
+  },
+  {
+    // AudioWorklet scripts run on the audio thread with their own globals.
+    files: ['src/renderer/public/*-worklet.js'],
+    languageOptions: {
+      globals: { AudioWorkletProcessor: 'readonly', registerProcessor: 'readonly' },
+    },
   },
   {
     files: ['src/renderer/**/*.{ts,tsx}'],
@@ -25,6 +32,13 @@ export default tseslint.config(
     rules: {
       ...reactHooks.configs.recommended.rules,
       'react-refresh/only-export-components': 'warn',
+    },
+  },
+  {
+    // Entry files render straight into the page and export nothing.
+    files: ['src/renderer/*/main.tsx'],
+    rules: {
+      'react-refresh/only-export-components': 'off',
     },
   },
   {
