@@ -11,8 +11,10 @@
     "node": ">=22.12.0"
   },
   "scripts": {
+    "predev": "node scripts/check-node.cjs",
     "dev": "electron-vite dev",
     "start": "electron-vite preview",
+    "prebuild": "node scripts/check-node.cjs",
     "build": "electron-vite build",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "lint": "eslint .",

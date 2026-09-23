@@ -7,12 +7,14 @@
 
 ## Development
 
-Requires **Node 22.12+** (pinned in `.node-version`; [fnm](https://github.com/Schniz/fnm) picks it up automatically).
+Requires **Node 22.12+** (Node 24 is pinned in `.node-version`). If your default Node is older, run commands through [fnm](https://github.com/Schniz/fnm):
 
 ```bash
 npm install
 npm run dev
 ```
+
+With fnm (Windows): `fnm exec --using=24 npm.cmd install` then `fnm exec --using=24 npm.cmd run dev`. The `dev` and `build` scripts refuse to start on an older Node, with a message saying so.
 
 AI-DA starts in the tray. On first run the settings window opens. After that, click the tray icon or use its menu to open it. Windows 11 hides new tray icons under the `^` overflow arrow; drag the icon onto the taskbar to keep it visible.
 
