@@ -2,7 +2,7 @@
 
 **AI-DA (AI Desktop Assistant)** is a voice-first assistant for Windows that runs from the system tray. It hears you, understands what you mean and acts on your PC: it opens apps, clicks through UI, changes volume and more. It can also be controlled from your phone through Tailscale when you're away from your desk.
 
-Status: **Phase 0 (Foundation) complete; next up is Phase 1** (last updated 2026-09-23).
+Status: **Phases 0–1 complete (text-mode brain); next up is Phase 2 (voice)** (last updated 2026-09-23).
 
 ## Decisions made
 
@@ -38,7 +38,7 @@ Fallbacks are **not steps in the chain**. They're only tried when the primary fa
 | Stage | Primary | Only if that fails |
 |---|---|---|
 | Speech-to-text | whisper.cpp `large-v3-turbo` on GPU (local) | Local Whisper on CPU. Groq Whisper is opt-in and sends raw audio off the PC. |
-| Brain | Gemini Flash-Lite (~500 free req/day) | Groq `gpt-oss-120b` (~1,000 free req/day) |
+| Brain | Gemini `gemini-3.5-flash-lite` (~500 free req/day) | Groq `qwen/qwen3.8-27b` (~1,000 free req/day; supports parallel tool calls) |
 | Text-to-speech | Kokoro (local) | Windows built-in SAPI voice |
 
 ---
@@ -225,7 +225,7 @@ Target machine: RTX 3070 Ti (8 GB), 32 GB RAM, 100 GB free on C:, and more on D:
 | Privacy | In-house `privacy-guard` package (detectors, validators, placeholder vault) |
 | Tools | zod schemas |
 | Native | .NET 8 sidecar: CoreAudio, System.Windows.Automation, Windows.Media.Ocr, Win32 |
-| Storage | `electron-store` (settings), `better-sqlite3` (action log, quota counters), `safeStorage` (keys and sensitive values) |
+| Storage | Validated JSON files (settings, quota counters), daily JSON Lines logs (actions, outbound requests; 30-day retention), `safeStorage` (keys and sensitive values). SQLite arrives with Memory. |
 | Remote (2.1) | Fastify + WebSocket, Tailscale CLI/LocalAPI, PWA |
 | Quality | Vitest, Playwright for Electron, ESLint + Prettier, GitHub Actions (Windows runner) |
 | Packaging | electron-builder (NSIS), auto-update through GitHub Releases |
@@ -261,14 +261,15 @@ Each phase ends with something you can run and use.
 
 **Phase 0: Foundation**
 - Scaffold electron-vite, React and TypeScript, then set up the tray, a single instance, launch at login, settings with the `safeStorage` key vault, lint, tests and CI.
-- ✅ *Done when:* the tray icon appears, the settings window opens and keys save.
+- ✅ *Done when:* the tray icon appears, the settings window opens and keys save. *(done 2026-09-23)*
 
-**Phase 1: Brain, text only, private from day one**
+**Phase 1: Brain, text only, private from day one** ✅ *(done 2026-09-23)*
 - Build the Privacy Guard and egress, including the leak-test corpus.
 - Build the tool registry, permission gate, action log and instant parser.
 - Add the Gemini and Groq providers and the command palette.
 - Add first tools: volume and media (temporary PowerShell version), open app, window control.
 - ✅ *Done when:* typing "open spotify and set volume to 30" works, and typing a fake card number shows `[CARD_1]` in the outbound log.
+- *Built:* Windows control runs through a long-lived Windows PowerShell process that compiles `resources/native/AidaWin.cs` once (Core Audio volume, media keys, window management, Start-menu app list). Phase 3's .NET sidecar replaces it behind the same `WindowsBridge` interface.
 
 **Phase 2: Voice**
 - Build the audio window, then add VAD, push-to-talk, whisper.cpp, Kokoro with streaming and barge-in.

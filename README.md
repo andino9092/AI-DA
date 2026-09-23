@@ -3,18 +3,16 @@
 **AI Desktop Assistant**: a voice-first, privacy-first assistant that lives in the Windows system tray. It can open apps, click through UI, control volume and more, and it keeps sensitive information on your PC.
 
 > v2 is a ground-up rewrite. See [PLAN.md](PLAN.md) for the architecture, features and roadmap.
-> **Current phase: 0 (Foundation)**: tray app, settings window and encrypted API key storage.
+> **Current phase: 1 done (text-mode brain).** Press **Ctrl+Alt+A** anywhere to type a command. Simple ones (volume, media, apps, windows) run locally; anything else goes to a free AI provider, with sensitive information masked first.
 
 ## Development
 
-Requires **Node 22.12+** (Node 24 is pinned in `.node-version`). If your default Node is older, run commands through [fnm](https://github.com/Schniz/fnm):
+Requires **Node 22.12+** (24 LTS recommended, `winget install --id OpenJS.NodeJS.LTS -e`). The `dev` and `build` scripts check this and stop with a clear message on older versions.
 
 ```bash
 npm install
 npm run dev
 ```
-
-With fnm (Windows): `fnm exec --using=24 npm.cmd install` then `fnm exec --using=24 npm.cmd run dev`. The `dev` and `build` scripts refuse to start on an older Node, with a message saying so.
 
 AI-DA starts in the tray. On first run the settings window opens. After that, click the tray icon or use its menu to open it. Windows 11 hides new tray icons under the `^` overflow arrow; drag the icon onto the taskbar to keep it visible.
 

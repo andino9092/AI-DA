@@ -14,3 +14,8 @@ body {
   @apply bg-zinc-50 text-zinc-900 antialiased dark:bg-[#0b0b10] dark:text-zinc-100;
   font-family: var(--font-sans);
 }
+
+/* The command palette window is transparent; its panel draws its own background. */
+body.palette {
+  background: transparent;
+}

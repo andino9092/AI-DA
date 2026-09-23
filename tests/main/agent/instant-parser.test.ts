@@ -1,0 +1,76 @@
+import { describe, expect, it } from 'vitest';
+import { parseInstant } from '../../../src/main/agent/instant-parser';
+
+describe('parseInstant', () => {
+  it.each([
+    ['set volume to 30', [{ name: 'set_volume', args: { level: 30 } }]],
+    ['Volume 45%', [{ name: 'set_volume', args: { level: 45 } }]],
+    [
+      'Hey Aida, turn the volume down by 15 percent.',
+      [{ name: 'change_volume', args: { delta: -15 } }],
+    ],
+    ['turn it up', [{ name: 'change_volume', args: { delta: 10 } }]],
+    ['louder please', [{ name: 'change_volume', args: { delta: 10 } }]],
+    ['mute', [{ name: 'set_mute', args: { muted: true } }]],
+    ['unmute the sound', [{ name: 'set_mute', args: { muted: false } }]],
+    ["what's the volume", [{ name: 'get_volume', args: {} }]],
+    ['pause the music', [{ name: 'media_control', args: { action: 'play_pause' } }]],
+    ['skip this song', [{ name: 'media_control', args: { action: 'next' } }]],
+    ['previous track', [{ name: 'media_control', args: { action: 'previous' } }]],
+    ['what time is it?', [{ name: 'get_time', args: {} }]],
+    ['open Spotify', [{ name: 'open_app', args: { name: 'spotify' } }]],
+    ['launch visual studio code', [{ name: 'open_app', args: { name: 'visual studio code' } }]],
+    ['open github.com/andino9092', [{ name: 'open_url', args: { url: 'github.com/andino9092' } }]],
+    ['close discord', [{ name: 'close_app', args: { name: 'discord' } }]],
+    [
+      'snap chrome to the left',
+      [{ name: 'window_action', args: { action: 'snap_left', target: 'chrome' } }],
+    ],
+    ['snap this window right', [{ name: 'window_action', args: { action: 'snap_right' } }]],
+    ['minimize this', [{ name: 'window_action', args: { action: 'minimize' } }]],
+    [
+      'maximise spotify',
+      [{ name: 'window_action', args: { action: 'maximize', target: 'spotify' } }],
+    ],
+    [
+      'switch to discord',
+      [{ name: 'window_action', args: { action: 'focus', target: 'discord' } }],
+    ],
+    [
+      'move discord to my second monitor',
+      [{ name: 'window_action', args: { action: 'next_monitor', target: 'discord' } }],
+    ],
+  ])('%s', (text, expected) => {
+    expect(parseInstant(text)).toEqual(expected);
+  });
+
+  it('handles compound commands when every part parses', () => {
+    expect(parseInstant('open spotify and set volume to 30')).toEqual([
+      { name: 'open_app', args: { name: 'spotify' } },
+      { name: 'set_volume', args: { level: 30 } },
+    ]);
+    expect(parseInstant('pause, then snap chrome left')).toEqual([
+      { name: 'media_control', args: { action: 'play_pause' } },
+      { name: 'window_action', args: { action: 'snap_left', target: 'chrome' } },
+    ]);
+  });
+
+  it('keeps "and" inside app names when splitting would not parse', () => {
+    expect(parseInstant('open tom and jerry')).toEqual([
+      { name: 'open_app', args: { name: 'tom and jerry' } },
+    ]);
+  });
+
+  it.each([
+    'open a new tab',
+    'open my resume',
+    'close this tab',
+    'email John that I am running late',
+    'what is the weather tomorrow',
+    'open spotify and play my liked songs',
+    'switch to',
+    '',
+  ])('leaves "%s" to the LLM', (text) => {
+    expect(parseInstant(text)).toBeNull();
+  });
+});

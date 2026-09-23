@@ -28,8 +28,29 @@ export default tseslint.config(
     },
   },
   {
+    // Privacy guarantee: only the Privacy Guard may mint ScrubbedText (see PLAN.md, "One way out").
+    files: ['src/**/*.{ts,tsx}'],
+    ignores: ['src/main/privacy/guard.ts'],
     rules: {
-      '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector: "TSAsExpression > TSTypeReference[typeName.name='ScrubbedText']",
+          message: 'Only the Privacy Guard may create ScrubbedText. Use guard.scrub().',
+        },
+        {
+          selector: "TSTypeAssertion > TSTypeReference[typeName.name='ScrubbedText']",
+          message: 'Only the Privacy Guard may create ScrubbedText. Use guard.scrub().',
+        },
+      ],
+    },
+  },
+  {
+    rules: {
+      '@typescript-eslint/no-unused-vars': [
+        'error',
+        { argsIgnorePattern: '^_', varsIgnorePattern: '^_' },
+      ],
       '@typescript-eslint/consistent-type-imports': 'error',
     },
   },

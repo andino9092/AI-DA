@@ -4,6 +4,8 @@ import type { Settings, SettingsPatch } from '@shared/settings';
 import type { SecretsSnapshot } from '@shared/secrets';
 import { Button, Section, Toggle } from './components';
 import { SecretRow } from './SecretRow';
+import { PrivacySection } from './PrivacySection';
+import { UsageSection } from './UsageSection';
 
 export function App() {
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -88,7 +90,24 @@ export function App() {
         ))}
       </Section>
 
+      <UsageSection settings={settings} />
+
+      <PrivacySection settings={settings} update={update} />
+
       <Section title="General">
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <div className="text-sm">Command box</div>
+            <div className="text-xs text-zinc-500 dark:text-zinc-400">
+              {info.paletteShortcut.registered
+                ? 'Type a command from anywhere. Voice arrives in the next update.'
+                : 'This shortcut is taken by another app, so use the tray menu instead.'}
+            </div>
+          </div>
+          <kbd className="rounded-md border border-zinc-300 px-2 py-1 text-xs dark:border-zinc-700">
+            {info.paletteShortcut.accelerator}
+          </kbd>
+        </div>
         <Toggle
           label="Launch at login"
           hint={

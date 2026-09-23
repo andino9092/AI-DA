@@ -11,6 +11,19 @@ import { writeFileAtomic } from '../util/atomic-write';
 
 type Events = { changed: [settings: Settings, previous: Settings] };
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/** Deep-merges saved values over defaults so nested fields added in later versions get defaults. */
+function mergeDefaults(defaults: unknown, saved: unknown): unknown {
+  if (!isPlainObject(defaults) || !isPlainObject(saved))
+    return saved === undefined ? defaults : saved;
+  const out: Record<string, unknown> = { ...defaults };
+  for (const [key, value] of Object.entries(saved)) out[key] = mergeDefaults(defaults[key], value);
+  return out;
+}
+
 /**
  * JSON-file settings store. Every read and write is validated, so a hand-edited or corrupted
  * file can never put the app into an invalid state: it's backed up and replaced with defaults.
@@ -43,7 +56,10 @@ export class SettingsStore extends EventEmitter<Events> {
     try {
       const raw: unknown = JSON.parse(readFileSync(this.filePath, 'utf8'));
       // Fill in fields added since the file was written, then validate the result.
-      const merged = { ...DEFAULT_SETTINGS, ...(raw as object), version: DEFAULT_SETTINGS.version };
+      const merged = {
+        ...(mergeDefaults(DEFAULT_SETTINGS, raw) as object),
+        version: DEFAULT_SETTINGS.version,
+      };
       return settingsSchema.parse(merged);
     } catch {
       renameSync(this.filePath, `${this.filePath}.corrupt-${Date.now()}`);

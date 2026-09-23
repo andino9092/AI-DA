@@ -17,3 +17,18 @@ export const ASSISTANT_STATE_LABELS: Record<AssistantState, string> = {
   muted: 'Microphone muted',
   offline: 'Offline',
 };
+
+/** Progress of one command, streamed to the command palette (and later the overlay). */
+export type AssistantEvent =
+  | { type: 'started'; requestId: string }
+  | { type: 'status'; requestId: string; text: string }
+  | { type: 'reply'; requestId: string; text: string; ok: boolean }
+  | {
+      type: 'confirm';
+      requestId: string;
+      confirmId: string;
+      /** Scrubbed: sensitive values appear only as placeholders. */
+      summary: string;
+      usesSensitiveValue: boolean;
+    }
+  | { type: 'confirm-resolved'; requestId: string; confirmId: string };

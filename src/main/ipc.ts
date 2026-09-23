@@ -1,16 +1,27 @@
 import { BrowserWindow, dialog, ipcMain, shell, type IpcMainInvokeEvent } from 'electron';
 import { z } from 'zod';
 import { IPC, type AppInfo, type SaveSecretResult } from '@shared/ipc';
+import type { ProviderUsage } from '@shared/llm';
+import type { AddSensitiveValueResult } from '@shared/privacy';
 import { settingsPatchSchema } from '@shared/settings';
-import { secretNameSchema } from './secrets/schemas';
 import type { SettingsStore } from './settings/store';
 import type { SecretVault } from './secrets/vault';
+import { secretNameSchema } from './secrets/schemas';
+import type { SensitiveValueStore } from './privacy/sensitive-values';
 import { isAllowedExternalUrl } from './app/external-links';
 
 interface Deps {
   settings: SettingsStore;
   vault: SecretVault;
+  sensitive: SensitiveValueStore;
   appInfo: () => AppInfo;
+  usage: () => ProviderUsage[];
+  logsDir: string;
+  palette: {
+    submit(text: string): Promise<void>;
+    confirm(confirmId: string, approved: boolean): void;
+    hide(): void;
+  };
 }
 
 /** Only our own pages (the dev server or bundled files) may call into the main process. */
@@ -33,7 +44,20 @@ function handle<T>(
   });
 }
 
-export function registerIpc({ settings, vault, appInfo }: Deps): void {
+function errorMessage(err: unknown, fallback: string): string {
+  if (err instanceof z.ZodError) return err.issues[0]?.message ?? fallback;
+  return err instanceof Error ? err.message : fallback;
+}
+
+export function registerIpc({
+  settings,
+  vault,
+  sensitive,
+  appInfo,
+  usage,
+  logsDir,
+  palette,
+}: Deps): void {
   handle(IPC.settingsGet, () => settings.get());
   handle(IPC.settingsUpdate, (_e, patch) => settings.update(settingsPatchSchema.parse(patch)));
 
@@ -50,19 +74,28 @@ export function registerIpc({ settings, vault, appInfo }: Deps): void {
       vault.set(secretName, z.string().parse(value));
       return { ok: true, snapshot: vault.snapshot() };
     } catch (err) {
-      const message =
-        err instanceof z.ZodError
-          ? (err.issues[0]?.message ?? 'Invalid key.')
-          : err instanceof Error
-            ? err.message
-            : 'Could not save the key.';
-      return { ok: false, error: message };
+      return { ok: false, error: errorMessage(err, 'Could not save the key.') };
     }
   });
   handle(IPC.secretsRemove, (_e, name) => {
     vault.remove(secretNameSchema.parse(name));
     return vault.snapshot();
   });
+
+  handle(IPC.privacyList, () => sensitive.list());
+  handle(IPC.privacyAdd, (_e, label, value): AddSensitiveValueResult => {
+    try {
+      return {
+        ok: true,
+        items: sensitive.add({ label: z.string().parse(label), value: z.string().parse(value) }),
+      };
+    } catch (err) {
+      return { ok: false, error: errorMessage(err, 'Could not save that value.') };
+    }
+  });
+  handle(IPC.privacyRemove, (_e, id) => sensitive.remove(z.string().parse(id)));
+
+  handle(IPC.llmUsage, () => usage());
 
   handle(IPC.appInfo, () => appInfo());
   handle(IPC.chooseFolder, async (event, defaultPath) => {
@@ -81,4 +114,13 @@ export function registerIpc({ settings, vault, appInfo }: Deps): void {
     const target = z.string().parse(url);
     if (isAllowedExternalUrl(target)) await shell.openExternal(target);
   });
+  handle(IPC.openLogs, async () => {
+    await shell.openPath(logsDir);
+  });
+
+  handle(IPC.paletteSubmit, (_e, text) => palette.submit(z.string().max(2000).parse(text)));
+  handle(IPC.paletteConfirm, (_e, id, approved) =>
+    palette.confirm(z.string().parse(id), z.boolean().parse(approved)),
+  );
+  handle(IPC.paletteHide, () => palette.hide());
 }

@@ -48,6 +48,8 @@
     "vitest": "^5.0.1"
   },
   "dependencies": {
+    "@google/genai": "^2.24.0",
+    "groq-sdk": "^1.6.0",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
     "zod": "^4.6.5"

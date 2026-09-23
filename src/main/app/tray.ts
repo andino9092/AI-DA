@@ -4,6 +4,7 @@ import { paths } from './paths';
 
 export interface TrayActions {
   openSettings(): void;
+  openPalette(): void;
   setMicrophoneMuted(muted: boolean): void;
   setLaunchAtLogin(enabled: boolean): void;
   quit(): void;
@@ -11,6 +12,8 @@ export interface TrayActions {
 
 interface TrayView {
   state: AssistantState;
+  /** Shown next to the command box menu item, e.g. "Ctrl+Alt+A". */
+  paletteShortcut: string | null;
   microphoneMuted: boolean;
   launchAtLogin: boolean;
 }
@@ -32,8 +35,8 @@ export class TrayController {
     ) as Record<AssistantState, NativeImage>;
     this.view = initial;
     this.tray = new Tray(this.icons[initial.state]);
-    // Left-click opens settings for now; later phases will make it push-to-talk.
-    this.tray.on('click', () => this.actions.openSettings());
+    // Left-click opens the command box for now; Phase 2 makes it push-to-talk.
+    this.tray.on('click', () => this.actions.openPalette());
     this.render();
   }
 
@@ -47,13 +50,17 @@ export class TrayController {
   }
 
   private render(): void {
-    const { state, microphoneMuted, launchAtLogin } = this.view;
+    const { state, microphoneMuted, launchAtLogin, paletteShortcut } = this.view;
     this.tray.setImage(this.icons[state]);
     this.tray.setToolTip(`AI-DA — ${ASSISTANT_STATE_LABELS[state]}`);
     this.tray.setContextMenu(
       Menu.buildFromTemplate([
         { label: `AI-DA: ${ASSISTANT_STATE_LABELS[state]}`, enabled: false },
         { type: 'separator' },
+        {
+          label: paletteShortcut ? `Command box (${paletteShortcut})` : 'Command box',
+          click: () => this.actions.openPalette(),
+        },
         {
           label: 'Mute microphone',
           type: 'checkbox',
