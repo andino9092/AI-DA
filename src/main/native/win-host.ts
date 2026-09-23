@@ -20,6 +20,26 @@ export interface VolumeState {
   muted: boolean;
 }
 
+export interface AppAudio {
+  /** Process name, e.g. "Spotify". */
+  process: string;
+  level: number;
+  muted: boolean;
+}
+
+export interface AudioDevice {
+  id: string;
+  name: string;
+  default: boolean;
+}
+
+/** The app has no audio session (it hasn't played sound since it started). */
+export class NoAppAudioError extends Error {
+  constructor(readonly process: string) {
+    super(`${process} isn't playing any sound right now.`);
+  }
+}
+
 export type MediaAction = 'play_pause' | 'next' | 'previous' | 'stop';
 export type MediaCommand = 'play' | 'pause' | 'toggle' | 'next' | 'previous' | 'stop';
 
@@ -103,6 +123,11 @@ export interface WindowsBridge {
   getVolume(): Promise<VolumeState>;
   setVolume(level: number): Promise<VolumeState>;
   setMuted(muted: boolean): Promise<VolumeState>;
+  /** Apps with an audio session on the default output, with their own volume. */
+  appAudio(): Promise<AppAudio[]>;
+  setAppAudio(process: string, change: { level?: number; muted?: boolean }): Promise<AppAudio>;
+  audioDevices(): Promise<AudioDevice[]>;
+  setDefaultAudioDevice(id: string): Promise<void>;
   mediaKey(action: MediaAction): Promise<void>;
   mediaSessions(): Promise<MediaSession[]>;
   mediaControl(action: MediaCommand, app?: string): Promise<MediaSession & { accepted: boolean }>;
@@ -145,6 +170,8 @@ const windowSchema = z.object({
   pid: z.number(),
   minimized: z.boolean(),
 });
+const appAudioSchema = z.object({ process: z.string(), level: z.number(), muted: z.boolean() });
+const audioDeviceSchema = z.object({ id: z.string(), name: z.string(), default: z.boolean() });
 const appSchema = z.object({ name: z.string(), appId: z.string() });
 const mediaSessionSchema = z.object({
   appId: z.string(),
@@ -224,6 +251,34 @@ export class SidecarWindowsBridge implements WindowsBridge {
 
   async setMuted(muted: boolean) {
     return volumeSchema.parse(await this.call('mute.set', { muted }));
+  }
+
+  async appAudio() {
+    return z.array(appAudioSchema).parse(await this.call('audio.apps'));
+  }
+
+  async setAppAudio(process: string, change: { level?: number; muted?: boolean }) {
+    try {
+      return appAudioSchema.parse(
+        await this.call('audio.app.set', {
+          process,
+          level: change.level === undefined ? null : Math.round(change.level),
+          muted: change.muted ?? null,
+        }),
+      );
+    } catch (err) {
+      if (err instanceof Error && err.message.startsWith('NO_AUDIO:'))
+        throw new NoAppAudioError(process);
+      throw err;
+    }
+  }
+
+  async audioDevices() {
+    return z.array(audioDeviceSchema).parse(await this.call('audio.devices'));
+  }
+
+  async setDefaultAudioDevice(id: string) {
+    await this.call('audio.device.set', { id });
   }
 
   async mediaKey(action: MediaAction) {

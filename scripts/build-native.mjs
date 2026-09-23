@@ -7,7 +7,12 @@ import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const srcDir = join(root, 'native', 'aida-win');
-const out = join(root, 'resources', 'native', 'aida-win.exe');
+// --out <path> builds somewhere else (e.g. while a running copy has the exe locked).
+const outArg = process.argv.indexOf('--out');
+const out =
+  outArg > 0
+    ? resolve(process.argv[outArg + 1])
+    : join(root, 'resources', 'native', 'aida-win.exe');
 
 if (process.platform !== 'win32') {
   console.log('[native] Skipping the Windows helper (not on Windows).');

@@ -90,6 +90,27 @@ function parseClause(clause: string): PlannedCall | null {
   )
     return { name: 'get_volume', args: {} };
 
+  // Per-app volume: "set spotify volume to 30", "discord volume 20", "mute chrome".
+  if (
+    (m = clause.match(
+      /^(?:set |turn |put )?(?:the )?(.+?)(?:'s)? volume (?:to |at )?(\d{1,3})(?: ?%| percent)?$/,
+    ))
+  )
+    return { name: 'set_app_volume', args: { app: m[1], level: num(m[2]) } };
+  if (
+    (m = clause.match(/^(un)?mute (?:the )?(.+?)(?: app)?$/)) &&
+    !/^(?:my )?(?:mic|microphone|yourself|you)$/.test(m[2]!)
+  )
+    return { name: 'set_app_volume', args: { app: m[2], muted: !m[1] } };
+
+  // Output device: "switch to my headphones", "play sound through the speakers".
+  if (
+    (m = clause.match(
+      /^(?:switch|change|move|set) (?:the )?(?:audio|sound|output|playback)(?: output)? (?:to|over to) (?:the |my )?(.+)$|^(?:switch|change) (?:over )?to (?:the |my )?((?:.+ )?(?:speakers?|headphones|headset|earbuds))$|^(?:play|use) (?:the )?(?:audio|sound) (?:through|on|from) (?:the |my )?(.+)$|^use (?:the |my )?((?:.+ )?(?:speakers?|headphones|headset|earbuds))$/,
+    ))
+  )
+    return { name: 'set_output_device', args: { device: m[1] ?? m[2] ?? m[3] ?? m[4] } };
+
   // Media: explicit play and pause (not the toggle key), optionally for a named app.
   const media = /^(.+?)(?: (?:on|in) ([a-z0-9]+(?: [a-z0-9]+)?))?$/.exec(clause);
   const mediaVerb = media?.[1] ?? clause;

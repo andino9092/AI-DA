@@ -292,6 +292,7 @@ Each phase ends with something you can run and use.
   - **Media:** Windows media sessions give explicit play/pause per app ("pause Spotify"), "what's playing?", and track names in replies ("Next up: …"). Media keys remain the fallback when no app reports a session.
   - **Screen tools:** `read_screen` (UI Automation list of controls with #ids, OCR fallback for apps without controls), `click` (by name, #id, or OCR text), `type_text` (optionally into a named field), `press_keys`, `scroll`. Local parsing for "click the send button in discord", "press ctrl shift t", "scroll down".
   - **Safety:** the sensitive-apps list (Settings → Privacy; defaults cover password managers and "bank"/"checkout"/"password" title words) blocks UI Automation, OCR and window titles for matching windows. Clicks on controls named like Send/Delete/Buy/Sign out, Enter-to-send and closing shortcuts ask first. Tools can ask mid-run once they know what they found. Voice commands are confirmed by voice ("…? Say yes or no"); anything but a clear yes is a no. **Panic key** (Ctrl+Alt+Backspace) stops the running command, queued commands, speech and pending questions.
+  - **Audio:** per-app volume and mute through Windows audio sessions, and switching the default output device (the same call the Sound settings page makes).
   - **Hold-to-talk:** push-to-talk goes through the sidecar's keyboard hook (the key is swallowed so apps don't see it); hold to talk through pauses, or tap then speak as before.
   - **Replies:** short replies are cached as audio after the first time, and common ones ("Okay.", "Paused.") are prepared at startup.
   - **Installer:** `npm run dist` → `AI-DA Setup <version>.exe` (149 MB; 500 MB installed, mostly Electron). Native modules are unpacked from asar; unused onnxruntime-web and non-x64 binaries are left out. Auto-update checks GitHub Releases every 6 hours (installed builds, can be turned off) and installs on quit or from the tray.
@@ -322,7 +323,7 @@ Found while building. Each should be fixed in the phase noted.
 | Auto-update only works once releases are published | electron-updater reads `latest.yml` from GitHub Releases | Publish with `npx electron-builder --win --publish always` (needs `GH_TOKEN`); the repo's releases must be public |
 | The installer isn't code-signed | No signing certificate | Windows SmartScreen shows "unknown publisher" on first install. A certificate (or Azure Trusted Signing) fixes it (Later) |
 | Media sessions name browsers by an id, so replies say "your browser" | Chromium reports a hashed app id | Map ids to browser names through the Start-menu index (Later) |
-| Per-app volume and output-device switching (MVP item 7) aren't built yet | Phase 3 focused on UI control and safety | Add to the helper's Core Audio code (next) |
+| ~~Per-app volume and output-device switching (MVP item 7) weren't built~~ | Phase 3 focused on UI control first | ✅ Fixed in Phase 3: `set_app_volume` ("mute Discord", "Spotify volume 30"), `set_output_device` ("switch to my headphones"), `list_audio` |
 
 ## Risks and how they're handled
 

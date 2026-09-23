@@ -79,6 +79,11 @@ namespace Aida
                 case "volume.get": return Audio.State();
                 case "volume.set": Audio.SetVolume(a.Int("level")); return Audio.State();
                 case "mute.set": Audio.SetMute(a.Bool("muted")); return Audio.State();
+                case "audio.apps": return Audio.Apps();
+                case "audio.app.set":
+                    return Audio.SetApp(a.Str("process"), a.OptInt("level", -1), a.OptStr("muted") == null ? -1 : (a.Bool("muted") ? 1 : 0));
+                case "audio.devices": return Audio.Devices();
+                case "audio.device.set": return Audio.SetDefaultDevice(a.Str("id"));
 
                 case "media.key": Input.MediaKey(a.Str("action")); return true;
                 case "media.sessions": return Media.Sessions();

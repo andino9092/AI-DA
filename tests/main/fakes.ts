@@ -2,7 +2,10 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  NoAppAudioError,
   NoMediaSessionError,
+  type AppAudio,
+  type AudioDevice,
   type HotkeyBinding,
   type MediaAction,
   type MediaCommand,
@@ -55,6 +58,30 @@ export class FakeWindows implements WindowsBridge {
   async setMuted(muted: boolean) {
     this.volume.muted = muted;
     return { ...this.volume };
+  }
+  appVolumes: AppAudio[] = [
+    { process: 'Spotify', level: 100, muted: false },
+    { process: 'Discord', level: 80, muted: false },
+  ];
+  devices: AudioDevice[] = [
+    { id: 'spk', name: 'Speakers (Realtek Audio)', default: true },
+    { id: 'hp', name: 'Headphones (WH-1000XM4)', default: false },
+  ];
+  async appAudio() {
+    return this.appVolumes.map((a) => ({ ...a }));
+  }
+  async setAppAudio(process: string, change: { level?: number; muted?: boolean }) {
+    const app = this.appVolumes.find((a) => a.process === process);
+    if (!app) throw new NoAppAudioError(process);
+    if (change.level !== undefined) app.level = change.level;
+    if (change.muted !== undefined) app.muted = change.muted;
+    return { ...app };
+  }
+  async audioDevices() {
+    return this.devices.map((d) => ({ ...d }));
+  }
+  async setDefaultAudioDevice(id: string) {
+    for (const d of this.devices) d.default = d.id === id;
   }
   async mediaKey(action: MediaAction) {
     this.media.push(action);

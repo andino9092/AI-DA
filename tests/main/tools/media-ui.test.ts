@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { AnyTool, ToolContext } from '../../../src/main/tools/types';
 import { mediaAppName, mediaTools } from '../../../src/main/tools/media/tools';
+import { audioTools, findDevice } from '../../../src/main/tools/system/audio';
 import { describeElement, findElement, findText, uiTools } from '../../../src/main/tools/ui/tools';
 import { windowTools } from '../../../src/main/tools/windows/tools';
 import { FakeWindows, el } from '../fakes';
@@ -223,5 +224,48 @@ describe('ui tools', () => {
     expect(
       findText([{ text: 'OK', words: [{ text: 'OK', x: 0, y: 0, w: 10, h: 10 }] }], 'ok'),
     ).toEqual({ x: 5, y: 5, text: 'OK' });
+  });
+});
+
+describe('per-app volume and output devices', () => {
+  it("sets one app's volume or mute by a spoken name", async () => {
+    const win = new FakeWindows();
+    const tools = audioTools(win);
+    const set = tool(tools, 'set_app_volume');
+    expect((await run(set, { app: 'spotify', level: 30 }, ctx().context)).speak).toBe(
+      'Spotify volume set to 30%.',
+    );
+    expect((await run(set, { app: 'discord', muted: true }, ctx().context)).speak).toBe(
+      'Muted Discord.',
+    );
+    expect(win.appVolumes).toEqual([
+      { process: 'Spotify', level: 30, muted: false },
+      { process: 'Discord', level: 80, muted: true },
+    ]);
+    const missing = await run(set, { app: 'steam', level: 10 }, ctx().context);
+    expect(missing).toMatchObject({ ok: false, followUp: true });
+  });
+
+  it('switches the output device by kind or name', async () => {
+    const win = new FakeWindows();
+    const device = tool(audioTools(win), 'set_output_device');
+    expect((await run(device, { device: 'headphones' }, ctx().context)).speak).toBe(
+      'Switched to WH-1000XM4 headphones.',
+    );
+    expect(win.devices.find((d) => d.default)?.id).toBe('hp');
+    expect((await run(device, { device: 'my speakers' }, ctx().context)).speak).toBe(
+      'Switched to Realtek Audio speakers.',
+    );
+    expect((await run(device, { device: 'the fridge' }, ctx().context)).ok).toBe(false);
+  });
+
+  it('matches device kinds against Windows names', () => {
+    const devices = [
+      { id: 'a', name: 'LG ULTRAGEAR (NVIDIA High Definition Audio)', default: false },
+      { id: 'b', name: 'Speakers (JBL Flip 5)', default: true },
+    ];
+    expect(findDevice(devices, 'jbl')?.id).toBe('b');
+    expect(findDevice(devices, 'monitor')?.id).toBe('a');
+    expect(findDevice(devices, 'speakers')?.id).toBe('b');
   });
 });
