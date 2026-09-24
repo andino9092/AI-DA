@@ -13,6 +13,7 @@ export const paths = {
   quotaFile: () => join(app.getPath('userData'), 'quota.json'),
   duckedFile: () => join(app.getPath('userData'), 'ducked.json'),
   timersFile: () => join(app.getPath('userData'), 'timers.json'),
+  memoryFile: () => join(app.getPath('userData'), 'memory.json'),
   logsDir: () => join(app.getPath('userData'), 'logs'),
   defaultModelsDir: () => join(app.getPath('userData'), 'models'),
 };

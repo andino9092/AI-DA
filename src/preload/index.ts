@@ -48,6 +48,20 @@ const api: AidaApi = {
     monitor: (enabled) => ipcRenderer.invoke(IPC.voiceMonitor, enabled),
     onMonitor: (listener) => subscribe(IPC.voiceMonitorEvent, listener),
   },
+  weather: {
+    findPlace: (city) => ipcRenderer.invoke(IPC.weatherFindPlace, city),
+  },
+  memory: {
+    list: () => ipcRenderer.invoke(IPC.memoryList),
+    remove: (ids) => ipcRenderer.invoke(IPC.memoryRemove, ids),
+    clear: () => ipcRenderer.invoke(IPC.memoryClear),
+    onChanged: (listener) => subscribe(IPC.memoryChanged, listener),
+  },
+  spotify: {
+    status: () => ipcRenderer.invoke(IPC.spotifyStatus),
+    connect: () => ipcRenderer.invoke(IPC.spotifyConnect),
+    disconnect: () => ipcRenderer.invoke(IPC.spotifyDisconnect),
+  },
   palette: {
     submit: (text) => ipcRenderer.invoke(IPC.paletteSubmit, text),
     confirm: (confirmId, approved) => ipcRenderer.invoke(IPC.paletteConfirm, confirmId, approved),

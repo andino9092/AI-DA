@@ -26,7 +26,100 @@ describe('parseInstant', () => {
     ['next song on spotify', [{ name: 'media_control', args: { action: 'next', app: 'spotify' } }]],
     ["what's playing", [{ name: 'now_playing', args: {} }]],
     ['what song is this', [{ name: 'now_playing', args: {} }]],
-    ['play daft punk on spotify', null],
+    ['play daft punk on spotify', [{ name: 'spotify_play', args: { query: 'daft punk' } }]],
+    [
+      'play music on spotify',
+      [{ name: 'media_control', args: { action: 'play', app: 'spotify' } }],
+    ],
+    [
+      'play the next song on spotify',
+      [{ name: 'media_control', args: { action: 'next', app: 'spotify' } }],
+    ],
+    [
+      'play my liked songs',
+      [{ name: 'spotify_play', args: { query: 'liked songs', type: 'liked' } }],
+    ],
+    [
+      'play my workout playlist',
+      [{ name: 'spotify_play', args: { query: 'workout', type: 'playlist' } }],
+    ],
+    [
+      'play the album discovery by daft punk',
+      [{ name: 'spotify_play', args: { query: 'discovery by daft punk', type: 'album' } }],
+    ],
+    [
+      'play songs by simon and garfunkel',
+      [{ name: 'spotify_play', args: { query: 'simon and garfunkel', type: 'artist' } }],
+    ],
+    ['queue levitating', [{ name: 'spotify_queue', args: { query: 'levitating' } }]],
+    [
+      'add blinding lights by the weeknd to the queue',
+      [{ name: 'spotify_queue', args: { query: 'blinding lights by the weeknd' } }],
+    ],
+    ['like this song', [{ name: 'spotify_like', args: {} }]],
+    ['turn on shuffle', [{ name: 'spotify_mode', args: { shuffle: true } }]],
+    ['stop shuffling', [{ name: 'spotify_mode', args: { shuffle: false } }]],
+    ['repeat this song', [{ name: 'spotify_mode', args: { repeat: 'song' } }]],
+    [
+      'remember that i take my coffee black',
+      [{ name: 'remember', args: { fact: 'i take my coffee black' } }],
+    ],
+    [
+      'when i say my editor, i mean visual studio code',
+      [{ name: 'set_nickname', args: { nickname: 'my editor', means: 'visual studio code' } }],
+    ],
+    ['forget about my coffee order', [{ name: 'forget', args: { what: 'my coffee order' } }]],
+    ['forget it', null],
+    ['what do you remember about me', [{ name: 'list_memories', args: {} }]],
+    ['remember to buy milk', null],
+    ['play daft punk', null],
+    ["what's the weather", [{ name: 'get_weather', args: {} }]],
+    ['what is the weather tomorrow', [{ name: 'get_weather', args: { when: 'tomorrow' } }]],
+    [
+      "what's the weather like in paris tomorrow",
+      [{ name: 'get_weather', args: { when: 'tomorrow', place: 'paris' } }],
+    ],
+    ["what's the forecast for saturday", [{ name: 'get_weather', args: { when: 'saturday' } }]],
+    [
+      'weather this weekend in new york',
+      [{ name: 'get_weather', args: { when: 'this weekend', place: 'new york' } }],
+    ],
+    ['is it going to rain today', [{ name: 'get_weather', args: { when: 'today' } }]],
+    ['do i need an umbrella tomorrow', [{ name: 'get_weather', args: { when: 'tomorrow' } }]],
+    ['how cold is it outside', [{ name: 'get_weather', args: {} }]],
+    ['what is the weather doing to my plants', null],
+    [
+      'convert 5 miles to km',
+      [{ name: 'convert_units', args: { value: 5, from: 'miles', to: 'km' } }],
+    ],
+    [
+      "what's 70 fahrenheit in celsius",
+      [{ name: 'convert_units', args: { value: 70, from: 'fahrenheit', to: 'celsius' } }],
+    ],
+    [
+      'how many cups in a liter',
+      [{ name: 'convert_units', args: { value: 1, from: 'liter', to: 'cups' } }],
+    ],
+    [
+      'how many ounces is 200 grams',
+      [{ name: 'convert_units', args: { value: 200, from: 'grams', to: 'ounces' } }],
+    ],
+    ['convert 5 apples to oranges', null],
+    ['set an alarm for 7 am', [{ name: 'set_alarm', args: { time: '7 am' } }]],
+    ['wake me up at 6:30', [{ name: 'set_alarm', args: { time: '6:30' } }]],
+    ['alarm for 10 minutes', [{ name: 'set_timer', args: { duration: '10 minutes' } }]],
+    [
+      'remind me at 5 pm to call mom',
+      [{ name: 'set_alarm', args: { time: 'at 5 pm', label: 'call mom' } }],
+    ],
+    [
+      'remind me to look at the stove at 6',
+      [{ name: 'set_alarm', args: { time: 'at 6', label: 'look at the stove' } }],
+    ],
+    [
+      'remind me tomorrow at 9 to email sam',
+      [{ name: 'set_alarm', args: { time: 'tomorrow at 9', label: 'email sam' } }],
+    ],
     [
       'click the send button in discord',
       [{ name: 'click', args: { target: 'send', window: 'discord' } }],
@@ -133,13 +226,18 @@ describe('parseInstant', () => {
     ]);
   });
 
+  it('opens Spotify and then plays from it', () => {
+    expect(parseInstant('open spotify and play my liked songs')).toEqual([
+      { name: 'open_app', args: { name: 'spotify' } },
+      { name: 'spotify_play', args: { query: 'liked songs', type: 'liked' } },
+    ]);
+  });
+
   it.each([
     'open a new tab',
     'open my resume',
     'close this tab',
     'email John that I am running late',
-    'what is the weather tomorrow',
-    'open spotify and play my liked songs',
     'switch to',
     '',
   ])('leaves "%s" to the LLM', (text) => {

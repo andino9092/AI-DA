@@ -1,4 +1,5 @@
-import { parseDuration } from '../tools/info/timers';
+import { parseClockTime, parseDuration } from '../tools/info/timers';
+import { findUnit } from '../tools/info/units';
 import { normalizeUrl } from '../tools/apps/tools';
 
 export interface PlannedCall {
@@ -65,6 +66,169 @@ function target(raw: string): string | undefined {
   return THIS_WINDOW.test(raw.trim()) || THIS_WINDOW.test(t) ? undefined : t;
 }
 
+const WHEN =
+  /^(?:right now|now|today|tonight|this (?:morning|afternoon|evening|week|weekend)|the (?:week|weekend)|tomorrow(?: (?:morning|afternoon|evening|night))?|(?:on |this |next )?(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday))$/;
+
+/** "tomorrow in paris", "in paris", "for saturday", "" → when/place, or null if it's something else. */
+function weatherRest(rest: string | undefined): { when?: string; place?: string } | null {
+  let r = (rest ?? '').replace(/^(?:outside|out) ?/, '').trim();
+  if (!r) return {};
+  let when: string | undefined;
+  // The time can come first or last: "tomorrow in paris", "in paris tomorrow".
+  const first = /^(.+?) (?=in |at |for )/.exec(r);
+  if (first && WHEN.test(first[1]!)) {
+    when = first[1];
+    r = r.slice(first[0].length);
+  } else {
+    const last =
+      / ((?:on |this |next )?\S+(?: (?:morning|afternoon|evening|night|week|weekend))?)$/.exec(r);
+    if (last && WHEN.test(last[1]!)) {
+      when = last[1];
+      r = r.slice(0, last.index);
+    }
+  }
+  r = r.replace(/^(?:for|on)(?: |$)/, '').trim();
+  if (!r) return { when };
+  if (WHEN.test(r)) return when ? null : { when: r };
+  const place = /^(?:in|at) (.+)$/.exec(r);
+  return place ? { ...(when ? { when } : {}), place: place[1]! } : null;
+}
+
+function parseWeather(clause: string): PlannedCall | null {
+  const m =
+    /^(?:(?:what(?:'s| is| will be)|how(?:'s| is)|check|get|tell me) )?(?:the )?(?:weather|forecast|temperature)(?: (?:going to be|gonna be|be))?(?: like)?(?: (.+))?$/.exec(
+      clause,
+    ) ??
+    /^(?:is it|will it|is it going to|is it gonna) (?:rain|snow)(?:ing)?(?: (.+))?$/.exec(clause) ??
+    /^do i need (?:an umbrella|a jacket|a coat)(?: (.+))?$/.exec(clause) ??
+    /^how (?:hot|cold|warm) is it(?: (.+))?$/.exec(clause);
+  if (!m) return null;
+  const rest = weatherRest(m[1]);
+  return rest ? { name: 'get_weather', args: rest } : null;
+}
+
+const AMOUNT = String.raw`(\d+(?:\.\d+)?|an?|one|half an?)`;
+
+function amount(word: string | undefined): number {
+  if (!word || /^(?:an?|one)$/.test(word)) return 1;
+  if (word.startsWith('half')) return 0.5;
+  return Number(word);
+}
+
+/** "convert 5 miles to km", "70 fahrenheit in celsius", "how many cups in a liter". */
+function parseConversion(clause: string): PlannedCall | null {
+  let m = new RegExp(
+    String.raw`^(?:convert |what(?:'s| is) |how much is |how many \S+ (?:is|are) )?${AMOUNT} (.+?) (?:to|in|into|in to|as) (.+)$`,
+  ).exec(clause);
+  if (m && findUnit(m[2]!) && findUnit(m[3]!))
+    return { name: 'convert_units', args: { value: amount(m[1]), from: m[2], to: m[3] } };
+  m = new RegExp(
+    String.raw`^how many (.+?) (?:are |is )?(?:in|are in|is in|make|makes|is|are) (?:${AMOUNT} )?(.+)$`,
+  ).exec(clause);
+  if (m && findUnit(m[1]!) && findUnit(m[3]!))
+    return { name: 'convert_units', args: { value: amount(m[2]), from: m[3], to: m[1] } };
+  return null;
+}
+
+/** "play the next song on spotify" is a media key, not a search. */
+const NOT_A_SONG =
+  /^(?:the |some |my |this )?(?:next |previous |last )?(?:music|songs?|tracks?|it|this|that|something|anything|video|media|playback|one)$/;
+
+/** Spotify: search-and-play, queue, like, shuffle and repeat. */
+function parseSpotify(clause: string): PlannedCall | null {
+  let m: RegExpExecArray | null;
+  if (
+    /^(?:play|put on|shuffle) (?:me )?(?:my )?(?:liked|saved|favou?rite) (?:songs|tracks|music)(?: on spotify)?$/.test(
+      clause,
+    )
+  )
+    return { name: 'spotify_play', args: { query: 'liked songs', type: 'liked' } };
+  if (
+    (m = /^(?:play|put on) (?:my |the )?(.+?) playlist(?: on spotify)?$/.exec(clause)) &&
+    !/youtube/.test(m[1]!)
+  )
+    return { name: 'spotify_play', args: { query: m[1], type: 'playlist' } };
+  if (
+    (m = /^play (?:the )?album (.+?)(?: on spotify)?$/.exec(clause)) ??
+    (m = /^play (?:the )?(.+?) album(?: on spotify)?$/.exec(clause))
+  )
+    return { name: 'spotify_play', args: { query: m[1], type: 'album' } };
+  if (
+    (m = /^play (?:some )?(?:songs|music|something) (?:by|from) (.+?)(?: on spotify)?$/.exec(
+      clause,
+    ))
+  )
+    return { name: 'spotify_play', args: { query: m[1], type: 'artist' } };
+  if ((m = /^play (.+) on spotify$/.exec(clause)) && !NOT_A_SONG.test(m[1]!))
+    return { name: 'spotify_play', args: { query: m[1] } };
+
+  if (
+    (m = /^queue(?: up)? (.+?)(?: on spotify)?$/.exec(clause)) ??
+    (m = /^add (.+?) to (?:the |my )?(?:spotify )?queue$/.exec(clause))
+  )
+    return NOT_A_SONG.test(m[1]!) ? null : { name: 'spotify_queue', args: { query: m[1] } };
+  if (
+    /^(?:like|save|heart) (?:this|the current|the) (?:song|track)(?: on spotify)?$|^add (?:this|the current) (?:song|track) to (?:my )?(?:liked songs|library|favou?rites)$/.test(
+      clause,
+    )
+  )
+    return { name: 'spotify_like', args: {} };
+
+  if ((m = /^(?:turn |switch )?shuffle (on|off)$|^turn (on|off) shuffle$/.exec(clause)))
+    return { name: 'spotify_mode', args: { shuffle: (m[1] ?? m[2]) === 'on' } };
+  if (/^(?:stop|don't) shuffl(?:e|ing)$/.test(clause))
+    return { name: 'spotify_mode', args: { shuffle: false } };
+  if (/^(?:repeat|loop) (?:this|the) (?:song|track)$/.test(clause))
+    return { name: 'spotify_mode', args: { repeat: 'song' } };
+  if ((m = /^(?:turn )?(?:repeat|loop) (on|off)$|^turn (on|off) (?:repeat|loop)$/.exec(clause)))
+    return { name: 'spotify_mode', args: { repeat: (m[1] ?? m[2]) === 'on' ? 'all' : 'off' } };
+  if (/^stop (?:repeating|looping)$/.test(clause))
+    return { name: 'spotify_mode', args: { repeat: 'off' } };
+  return null;
+}
+
+/** "remember that I take my coffee black", "when I say my editor, I mean VS Code". */
+function parseMemory(clause: string): PlannedCall | null {
+  let m: RegExpExecArray | null;
+  if (
+    (m = /^remember that (.+)$/.exec(clause)) ??
+    (m = /^remember ((?:my|i|i'm|i am|we|our) .+)$/.exec(clause))
+  )
+    return { name: 'remember', args: { fact: m[1] } };
+  if ((m = /^when i say (.+?),? i mean (.+)$/.exec(clause)))
+    return { name: 'set_nickname', args: { nickname: m[1], means: m[2] } };
+  if (
+    (m = /^forget (?:that |about |what i said about )?(.+)$/.exec(clause)) &&
+    !/^(?:it|that|this|everything|all of it|all that)$/.test(m[1]!)
+  )
+    return { name: 'forget', args: { what: m[1] } };
+  if (
+    /^what do you (?:remember|know)(?: about me)?$|^what have i (?:asked|told) you to remember$/.test(
+      clause,
+    )
+  )
+    return { name: 'list_memories', args: {} };
+  return null;
+}
+
+/** "wake me up at 7", "set an alarm for 6:30 am", "remind me at 5 pm to call mom". */
+function parseAlarm(clause: string): PlannedCall | null {
+  const isTime = (t: string) => parseClockTime(t, new Date()) !== null;
+  let m: RegExpExecArray | null;
+  if (
+    (m = /^(?:set |make )?(?:an |my |the )?alarm (?:for |at )?(.+)$/.exec(clause)) &&
+    isTime(m[1]!)
+  )
+    return { name: 'set_alarm', args: { time: m[1] } };
+  if ((m = /^wake me(?: up)? (?:at |by )?(.+)$/.exec(clause)) && isTime(m[1]!))
+    return { name: 'set_alarm', args: { time: m[1] } };
+  if ((m = /^remind me ((?:tomorrow )?(?:at )?.+?) to (.+)$/.exec(clause)) && isTime(m[1]!))
+    return { name: 'set_alarm', args: { time: m[1], label: m[2] } };
+  if ((m = /^remind me to (.+) ((?:tomorrow )?at .+|tomorrow)$/.exec(clause)) && isTime(m[2]!))
+    return { name: 'set_alarm', args: { time: m[2], label: m[1] } };
+  return null;
+}
+
 function parseClause(clause: string): PlannedCall | null {
   let m: RegExpMatchArray | null;
 
@@ -124,6 +288,13 @@ function parseClause(clause: string): PlannedCall | null {
     parseDuration(m[1]!)
   )
     return { name: 'set_timer', args: { duration: m[1] } };
+  const alarm = parseAlarm(clause);
+  if (alarm) return alarm;
+
+  // Weather, unit conversion and Spotify (before media: "stop shuffling" isn't "pause").
+  const info =
+    parseWeather(clause) ?? parseConversion(clause) ?? parseMemory(clause) ?? parseSpotify(clause);
+  if (info) return info;
 
   // Per-app volume: "set spotify volume to 30", "discord volume 20", "mute chrome".
   if (

@@ -1,7 +1,7 @@
 {
   "name": "ai-da",
   "productName": "AI-DA",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Voice-first, privacy-first desktop assistant that lives in the Windows tray.",
   "main": "./out/main/index.js",
   "author": "Andy",

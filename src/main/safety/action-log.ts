@@ -6,6 +6,7 @@ import type { ScrubbedText } from '../privacy/guard';
 export type LogEntry =
   | { type: 'command'; requestId: string; source: string; text: ScrubbedText }
   | { type: 'route'; requestId: string; route: 'instant' | 'llm' }
+  | { type: 'route'; requestId: string; route: 'routine'; text: ScrubbedText }
   | {
       type: 'tool';
       requestId: string;

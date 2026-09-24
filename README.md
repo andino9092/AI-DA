@@ -2,12 +2,12 @@
 
 **AI Desktop Assistant**: a voice-first, privacy-first assistant that lives in the Windows system tray. It can open apps, click through UI, control volume and more, and it keeps sensitive information on your PC.
 
-> **v1.0.0**, a ground-up rewrite of the original AI-DA. See [PLAN.md](PLAN.md) for the architecture, features and roadmap.
-> Say “Hey Aida, …”, hold **Ctrl+Alt+V** to talk, or **Ctrl+Alt+A** to type. Aida plays and pauses music per app, opens apps, files, folders and Steam games, moves windows, clicks buttons by name, types, sets timers and switches audio devices. **Ctrl+Alt+Backspace** stops everything. Speech recognition and the voice run locally; the models download from Settings → Voice (~2 GB).
+> **v1.1.0**, a ground-up rewrite of the original AI-DA. See [PLAN.md](PLAN.md) for the architecture, features and roadmap.
+> Say “Hey Aida, …”, hold **Ctrl+Alt+V** to talk, or **Ctrl+Alt+A** to type. Aida plays and pauses music per app, opens apps, files, folders and Steam games, moves windows, clicks buttons by name, types, sets timers and alarms, switches audio devices, checks the weather, converts units, plays anything on Spotify (Premium), remembers what you tell it and runs routines like “gaming mode”. **Ctrl+Alt+Backspace** stops everything. Speech recognition and the voice run locally; the models download from Settings → Voice (~2 GB).
 
 ## Install
 
-Download `AI-DA-Setup-1.0.0.exe` from the [latest release](https://github.com/andino9092/AI-DA/releases/latest) and run it. Windows SmartScreen may warn about an unknown publisher (the installer isn't code-signed yet): choose **More info → Run anyway**. The setup guide opens on first launch; add a free Gemini or Groq key there. Installed copies update themselves from GitHub Releases.
+Download `AI-DA-Setup-1.1.0.exe` from the [latest release](https://github.com/andino9092/AI-DA/releases/latest) and run it. Windows SmartScreen may warn about an unknown publisher (the installer isn't code-signed yet): choose **More info → Run anyway**. The setup guide opens on first launch; add a free Gemini or Groq key there. Installed copies update themselves from GitHub Releases.
 
 ## Development
 

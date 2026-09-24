@@ -5,6 +5,8 @@ import type { KeyTestResult, ProviderUsage } from './llm';
 import type { AddSensitiveValueResult, SensitiveValueSummary } from './privacy';
 import type { Settings, SettingsPatch } from './settings';
 import type { SecretName, SecretsSnapshot } from './secrets';
+import type { SpotifyConnectResult, SpotifyStatus } from './spotify';
+import type { MemorySnapshot } from './memory';
 
 /** Every IPC channel lives here so main and preload can never drift apart. */
 export const IPC = {
@@ -39,6 +41,14 @@ export const IPC = {
   modelsStatus: 'models:status',
   modelsInstall: 'models:install',
   modelsChanged: 'models:changed',
+  weatherFindPlace: 'weather:find-place',
+  memoryList: 'memory:list',
+  memoryRemove: 'memory:remove',
+  memoryClear: 'memory:clear',
+  memoryChanged: 'memory:changed',
+  spotifyStatus: 'spotify:status',
+  spotifyConnect: 'spotify:connect',
+  spotifyDisconnect: 'spotify:disconnect',
 } as const;
 
 export interface AppInfo {
@@ -50,6 +60,8 @@ export interface AppInfo {
   pushToTalkShortcut: { accelerator: string; registered: boolean };
   panicShortcut: { accelerator: string; registered: boolean };
 }
+
+export type FindPlaceResult = { ok: true; name: string } | { ok: false; error: string };
 
 export type SaveSecretResult =
   { ok: true; snapshot: SecretsSnapshot } | { ok: false; error: string };
@@ -100,6 +112,22 @@ export interface AidaApi {
     /** Settings → Mic check: turn live reporting on or off for this window. */
     monitor(enabled: boolean): Promise<void>;
     onMonitor(listener: (event: MonitorEvent) => void): () => void;
+  };
+  weather: {
+    /** Looks the city up (Open-Meteo) and saves it as the home city. */
+    findPlace(city: string): Promise<FindPlaceResult>;
+  };
+  memory: {
+    list(): Promise<MemorySnapshot>;
+    remove(ids: string[]): Promise<MemorySnapshot>;
+    clear(): Promise<MemorySnapshot>;
+    onChanged(listener: (snapshot: MemorySnapshot) => void): () => void;
+  };
+  spotify: {
+    status(): Promise<SpotifyStatus>;
+    /** Opens Spotify's sign-in page and waits until the user finishes (up to 3 minutes). */
+    connect(): Promise<SpotifyConnectResult>;
+    disconnect(): Promise<SpotifyStatus>;
   };
   palette: {
     submit(text: string): Promise<void>;

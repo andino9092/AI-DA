@@ -177,10 +177,22 @@ Kept deliberately small: *hear → understand → act → answer*, done fast and
     - Remote commands go through the same permission gate and Privacy Guard.
 
 ## Later (in rough priority order; each one is a separate module)
-1. Weather and info skills (Open-Meteo: free, no key; location is a city you set, never IP lookup. Reminders, alarms, unit conversion). Small enough to pull into Phase 3 if wanted.
-   - Spotify search-and-play ("play my liked songs", "play Daft Punk"): Spotify Web API with your own free developer app. Playback control needs Spotify Premium. Plain play/pause/next and "what's playing" don't need it: they come from Windows media sessions in Phase 3.
-2. Memory: preferences and app nicknames (local SQLite, never stores sensitive values)
-3. Routines ("Gaming mode", "Good morning")
+1. ✅ **Done (v1.1):** weather and info skills, and Spotify.
+   - `get_weather`: Open-Meteo, free, no key. The location is a city you set in Settings → Weather (or name in the command), never an IP lookup. Forecast up to 7 days, cached for 10 minutes.
+   - `set_alarm`: alarms and reminders at a clock time ("wake me up at 7", "remind me at 5 pm to call mom"), up to two days ahead. They share the timers file.
+   - `convert_units`: offline unit conversion (length, weight, cooking volumes, speed, area, data, time, temperature).
+   - Spotify search-and-play (`spotify_play`, `spotify_queue`, `spotify_like`, `spotify_mode`): the Spotify Web API through your own developer app. Sign-in uses PKCE with a one-time callback on `http://127.0.0.1:43821/callback`. The refresh token is kept in the DPAPI vault. Needs Premium: since February 2026, Spotify's development-mode apps require the owner to have Premium. Plain play/pause/next and "what's playing" still come from Windows media sessions and need none of this.
+   - All four have instant-parser rules, so common phrasings skip the AI.
+2. ✅ **Done (v1.1):** memory.
+   - Facts ("remember that I take my coffee black") and nicknames ("when I say my editor, I mean VS Code") are kept in `memory.json` (a small JSON file; SQLite wasn't needed).
+   - Anything the Privacy Guard would mask is refused, including emails and phone numbers.
+   - Nicknames are swapped in locally before every command.
+   - Up to 1,500 characters of facts go into the AI's instructions.
+   - Settings → Memory lists everything and can remove any of it.
+3. ✅ **Done (v1.1):** routines.
+   - A routine is a named list of commands (Settings → Routines, or "create a routine called gaming mode that…").
+   - Saying its name ("gaming mode", "start good morning") runs each command in order. Each step goes through the instant parser or the AI as usual, with the usual confirmations.
+   - A failed step doesn't stop the rest, and routines can't start other routines.
 4. Local vision model (Ollama on your 3070 Ti) for "what's on my screen?" and hard-to-find UI
 5. Claude power mode (Agent SDK on your Pro plan, opt-in, counts toward your Pro limits)
 6. Conversation mode (Gemini Live, audio only)
@@ -339,6 +351,7 @@ Found while building. Each should be fixed in the phase noted.
 | Voice is English only | whisper-server is started with `-l en` | Language setting (Later: multi-language) |
 | ~~AI requests failed or hung for ~18 s when Gemini was overloaded (503/504) and the Groq key was rejected~~ | No per-call time limit, no retry, and a busy provider was skipped entirely | ✅ Fixed 2026-09-24: 10 s limit per call, one retry on 503, busy providers retried last, plain-language errors (raw ones in the action log), and a **Test** button per key in Settings |
 | Only one free provider may be usable at a time | Gemini's free tier gets overloaded at busy hours; a second provider only helps if its key works | Check both keys with Test; consider a second Gemini model as an extra fallback (Later) |
+| Groq's free tier fits only one or two AI requests a minute | Free Groq allows 8,000 tokens a minute (and 1,000 output tokens, counted from the reply cap, now 300). Each request sends all 39 tools (~14.5K characters, very roughly 3.6–4.2K tokens) | Send only the tools a command needs (Later); Gemini is tried first, so Groq only covers overloads |
 | ~~The installer must unpack native modules from the asar archive~~ | Native `.node` files can't load from inside asar | ✅ Fixed in Phase 3 (`asarUnpack` for onnxruntime-node and sharp) |
 | Auto-update only works once releases are published | electron-updater reads `latest.yml` from GitHub Releases | Publish with `npx electron-builder --win --publish always` (needs `GH_TOKEN`); the repo's releases must be public |
 | The installer isn't code-signed | No signing certificate | Windows SmartScreen shows "unknown publisher" on first install. A certificate (or Azure Trusted Signing) fixes it (Later) |

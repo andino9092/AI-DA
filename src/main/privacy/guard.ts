@@ -60,6 +60,11 @@ export class PrivacyGuard {
     return text as ScrubbedText;
   }
 
+  /** Joining scrubbed pieces keeps them scrubbed. */
+  static join(...parts: ScrubbedText[]): ScrubbedText {
+    return parts.join('') as ScrubbedText;
+  }
+
   /**
    * overrides: stricter rules for one call, e.g. always masking emails and phone numbers in text
    * read off the screen (the setting exists for commands you say, like "email John").

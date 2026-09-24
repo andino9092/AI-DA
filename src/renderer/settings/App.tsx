@@ -9,6 +9,10 @@ import { UsageSection } from './UsageSection';
 import { VoiceSection } from './VoiceSection';
 import { ShortcutInput } from './ShortcutInput';
 import { Setup } from './Setup';
+import { WeatherSection } from './WeatherSection';
+import { SpotifySection } from './SpotifySection';
+import { MemorySection } from './MemorySection';
+import { RoutinesSection } from './RoutinesSection';
 
 export function App() {
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -89,6 +93,14 @@ export function App() {
       </Section>
 
       <VoiceSection settings={settings} info={info} update={update} />
+
+      <WeatherSection settings={settings} update={update} />
+
+      <SpotifySection settings={settings} update={update} />
+
+      <RoutinesSection settings={settings} update={update} />
+
+      <MemorySection />
 
       <UsageSection settings={settings} />
 

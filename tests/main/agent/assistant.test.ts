@@ -17,6 +17,8 @@ import { audioTools } from '../../../src/main/tools/system/audio';
 import { mediaTools } from '../../../src/main/tools/media/tools';
 import { windowTools } from '../../../src/main/tools/windows/tools';
 import { FakeProvider, FakeWindows, tempDir } from '../fakes';
+import { MemoryStore } from '../../../src/main/memory/memory';
+import type { Routine } from '../../../src/shared/settings';
 
 function setup(options: {
   providers?: LlmProvider[];
@@ -24,6 +26,8 @@ function setup(options: {
   customValues?: string[];
   limits?: Record<string, number>;
   hasNetwork?: boolean;
+  routines?: Routine[];
+  memory?: MemoryStore;
 }) {
   const dir = tempDir();
   const win = new FakeWindows();
@@ -74,6 +78,8 @@ function setup(options: {
     log: actions,
     emit: (e) => events.push(e),
     hasNetwork: () => options.hasNetwork ?? true,
+    routines: () => options.routines ?? [],
+    memory: options.memory,
   });
   const readLogs = () =>
     readdirSync(join(dir, 'logs'))
@@ -272,5 +278,45 @@ describe('Assistant: offline', () => {
     expect(await t.run('set volume to 30')).toBe('Volume set to 30%.');
     expect(await t.run('what is the capital of France')).toMatch(/offline/);
     expect(gemini.requests).toHaveLength(0);
+  });
+});
+
+describe('Assistant: routines and memory', () => {
+  it("runs a routine's commands in order and answers once", async () => {
+    const gemini = new FakeProvider('gemini', []);
+    const t = setup({
+      providers: [gemini],
+      routines: [
+        { name: 'Gaming mode', steps: ['open spotify', 'set volume to 40', 'snap this left'] },
+      ],
+    });
+    expect(await t.run('Hey Aida, start gaming mode.')).toBe(
+      'Opening Spotify. Volume set to 40%. Snapped left: Chrome.',
+    );
+    expect(t.win.volume.level).toBe(40);
+    expect(gemini.requests).toHaveLength(0);
+    expect(t.events.filter((e) => e.type === 'reply')).toHaveLength(1);
+    expect(t.readLogs()).toContain('"route":"routine"');
+  });
+
+  it('keeps going after a failed step', async () => {
+    const t = setup({
+      providers: [],
+      routines: [{ name: 'focus', steps: ['write my essay for me', 'set volume to 10'] }],
+    });
+    const reply = await t.run('focus mode');
+    expect(reply).toMatch(/Volume set to 10%\.$/);
+    expect(t.win.volume.level).toBe(10);
+  });
+
+  it('applies nicknames and sends remembered facts with AI requests', async () => {
+    const memory = new MemoryStore(join(tempDir(), 'memory.json'), () => false);
+    memory.setNickname('my music app', 'Spotify');
+    memory.remember('I like jazz');
+    const gemini = new FakeProvider('gemini', [{ text: 'Try some Coltrane.', toolCalls: [] }]);
+    const t = setup({ providers: [gemini], memory });
+    expect(await t.run('open my music app')).toBe('Opening Spotify.');
+    expect(await t.run('what should I listen to')).toBe('Try some Coltrane.');
+    expect(gemini.requests[0]!.system).toContain('The user asked you to remember: I like jazz.');
   });
 });

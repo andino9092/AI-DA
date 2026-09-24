@@ -1,5 +1,10 @@
 /** Only these hosts may be opened from a renderer; everything else is dropped. */
-const ALLOWED_HOSTS = new Set(['aistudio.google.com', 'console.groq.com', 'github.com']);
+const ALLOWED_HOSTS = new Set([
+  'aistudio.google.com',
+  'console.groq.com',
+  'github.com',
+  'developer.spotify.com',
+]);
 
 export function isAllowedExternalUrl(raw: string): boolean {
   try {

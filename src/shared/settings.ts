@@ -9,6 +9,14 @@ const providerSettingsSchema = z.object({
   dailyLimit: z.number().int().min(0),
 });
 
+export const routineSchema = z.object({
+  name: z.string().trim().min(1).max(40),
+  /** Commands as the user would say them: "open steam", "set volume to 40". */
+  steps: z.array(z.string().trim().min(1).max(200)).min(1).max(10),
+});
+
+export type Routine = z.infer<typeof routineSchema>;
+
 export const settingsSchema = z.object({
   version: z.literal(SETTINGS_VERSION),
   firstRunComplete: z.boolean(),
@@ -50,6 +58,27 @@ export const settingsSchema = z.object({
     /** Microphone to use; null means the Windows default. */
     inputDeviceId: z.string().min(1).nullable(),
   }),
+  weather: z.object({
+    /** Home city for "what's the weather"; set by name in Settings, never from an IP lookup. */
+    place: z
+      .object({
+        name: z.string().min(1).max(200),
+        latitude: z.number().min(-90).max(90),
+        longitude: z.number().min(-180).max(180),
+      })
+      .nullable(),
+    /** "auto" follows the Windows region (Fahrenheit in the US). */
+    unit: z.enum(['auto', 'celsius', 'fahrenheit']),
+  }),
+  spotify: z.object({
+    /** Client ID of the user's own Spotify developer app (not a secret with PKCE). */
+    clientId: z
+      .string()
+      .regex(/^[0-9a-f]{32}$/i, 'A Spotify Client ID is 32 letters and numbers.')
+      .nullable(),
+  }),
+  /** Named lists of commands, run in order when the user says the name ("gaming mode"). */
+  routines: z.array(routineSchema).max(20),
   shortcuts: z.object({
     /** Electron accelerator for the command box. */
     palette: z.string().min(1),
@@ -90,6 +119,9 @@ export const DEFAULT_SETTINGS: Settings = {
     duckOthers: true,
     inputDeviceId: null,
   },
+  weather: { place: null, unit: 'auto' },
+  spotify: { clientId: null },
+  routines: [],
   shortcuts: {
     palette: 'Control+Alt+A',
     pushToTalk: 'Control+Alt+V',

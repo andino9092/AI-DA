@@ -1,6 +1,12 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { z } from 'zod';
-import { SECRET_NAMES, type SecretName, type SecretsSnapshot } from '@shared/secrets';
+import {
+  SECRET_NAMES,
+  TOKEN_NAMES,
+  type SecretName,
+  type SecretsSnapshot,
+  type TokenName,
+} from '@shared/secrets';
 import { secretValueSchema } from './schemas';
 import { writeFileAtomic } from '../util/atomic-write';
 
@@ -27,7 +33,7 @@ export class VaultUnavailableError extends Error {
  * memory in the main process; it's never written to disk and never sent to a renderer.
  */
 export class SecretVault {
-  private encrypted: Map<SecretName, string>;
+  private encrypted: Map<SecretName | TokenName, string>;
 
   constructor(
     private readonly filePath: string,
@@ -40,7 +46,7 @@ export class SecretVault {
     return this.cipher.isEncryptionAvailable();
   }
 
-  set(name: SecretName, value: string): void {
+  set(name: SecretName | TokenName, value: string): void {
     if (!this.isAvailable()) throw new VaultUnavailableError();
     const clean = secretValueSchema.parse(value);
     this.encrypted.set(name, this.cipher.encryptString(clean).toString('base64'));
@@ -48,7 +54,7 @@ export class SecretVault {
   }
 
   /** Main-process only. Returns `null` when missing or undecryptable (e.g. copied from another PC). */
-  get(name: SecretName): string | null {
+  get(name: SecretName | TokenName): string | null {
     const blob = this.encrypted.get(name);
     if (!blob || !this.isAvailable()) return null;
     try {
@@ -58,7 +64,7 @@ export class SecretVault {
     }
   }
 
-  remove(name: SecretName): void {
+  remove(name: SecretName | TokenName): void {
     if (this.encrypted.delete(name)) this.persist();
   }
 
@@ -72,12 +78,12 @@ export class SecretVault {
     };
   }
 
-  private load(): Map<SecretName, string> {
-    const map = new Map<SecretName, string>();
+  private load(): Map<SecretName | TokenName, string> {
+    const map = new Map<SecretName | TokenName, string>();
     if (!existsSync(this.filePath)) return map;
     try {
       const file = vaultFileSchema.parse(JSON.parse(readFileSync(this.filePath, 'utf8')));
-      for (const name of SECRET_NAMES) {
+      for (const name of [...SECRET_NAMES, ...TOKEN_NAMES]) {
         const blob = file.secrets[name];
         if (blob) map.set(name, blob);
       }

@@ -7,7 +7,9 @@ import {
   type WebContents,
 } from 'electron';
 import { z } from 'zod';
-import { IPC, type AppInfo, type SaveSecretResult } from '@shared/ipc';
+import { IPC, type AppInfo, type FindPlaceResult, type SaveSecretResult } from '@shared/ipc';
+import type { SpotifyConnectResult, SpotifyStatus } from '@shared/spotify';
+import type { MemorySnapshot } from '@shared/memory';
 import type { KeyTestResult, ProviderUsage } from '@shared/llm';
 import type { AddSensitiveValueResult } from '@shared/privacy';
 import type { ModelStatus } from '@shared/models';
@@ -35,6 +37,20 @@ interface Deps {
     status(): ModelStatus[];
     install(): Promise<void>;
     onChanged(listener: (status: ModelStatus[]) => void): void;
+  };
+  weather: {
+    findPlace(city: string): Promise<FindPlaceResult>;
+  };
+  memory: {
+    list(): MemorySnapshot;
+    remove(ids: string[]): MemorySnapshot;
+    clear(): MemorySnapshot;
+    onChanged(listener: (snapshot: MemorySnapshot) => void): void;
+  };
+  spotify: {
+    status(): Promise<SpotifyStatus>;
+    connect(): Promise<SpotifyConnectResult>;
+    disconnect(): Promise<SpotifyStatus>;
   };
   voice: {
     vadModel(): Promise<Uint8Array>;
@@ -79,6 +95,9 @@ export function registerIpc({
   logsDir,
   palette,
   models,
+  weather,
+  memory,
+  spotify,
   voice,
 }: Deps): void {
   handle(IPC.settingsGet, () => settings.get());
@@ -154,6 +173,20 @@ export function registerIpc({
     for (const win of BrowserWindow.getAllWindows())
       win.webContents.send(IPC.modelsChanged, status);
   });
+
+  handle(IPC.weatherFindPlace, (_e, city) =>
+    weather.findPlace(z.string().min(1).max(100).parse(city)),
+  );
+  handle(IPC.memoryList, () => memory.list());
+  handle(IPC.memoryRemove, (_e, ids) => memory.remove(z.array(z.string()).max(200).parse(ids)));
+  handle(IPC.memoryClear, () => memory.clear());
+  memory.onChanged((snapshot) => {
+    for (const win of BrowserWindow.getAllWindows())
+      win.webContents.send(IPC.memoryChanged, snapshot);
+  });
+  handle(IPC.spotifyStatus, () => spotify.status());
+  handle(IPC.spotifyConnect, () => spotify.connect());
+  handle(IPC.spotifyDisconnect, () => spotify.disconnect());
 
   handle(IPC.voiceVadModel, (event) => {
     if (!voice.isAudioWindow(event.sender.id))

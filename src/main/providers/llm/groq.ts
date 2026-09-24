@@ -12,6 +12,12 @@ import {
 } from './types';
 
 const TIMEOUT_MS = 20_000;
+/**
+ * Groq's free tier allows 1,000 output tokens per minute and counts the most a reply could use,
+ * not what it did use. Without a cap it assumes more than 1,000 and rejects every request.
+ * Replies are one or two spoken sentences or a few tool calls, so this is plenty.
+ */
+const MAX_OUTPUT_TOKENS = 300;
 
 function toMessages(system: string, messages: ChatMessage[]): ChatCompletionMessageParam[] {
   const out: ChatCompletionMessageParam[] = [{ role: 'system', content: system }];
@@ -69,6 +75,7 @@ export class GroqProvider implements LlmProvider {
           })),
           tool_choice: 'auto',
           temperature: 0.2,
+          max_completion_tokens: MAX_OUTPUT_TOKENS,
           ...(effort ? { reasoning_effort: effort } : {}),
         },
         { signal },

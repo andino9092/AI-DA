@@ -38,6 +38,15 @@ import { VoiceService } from './voice/voice-service';
 import { Ducker } from './voice/ducker';
 import { join, parse as parsePath } from 'node:path';
 import { fileTools } from './tools/files/tools';
+import { hostname } from 'node:os';
+import { WeatherClient, weatherTools, type TemperatureUnit } from './tools/info/weather';
+import { unitTools } from './tools/info/units';
+import { SpotifyClient } from './spotify/client';
+import { spotifyTools } from './tools/media/spotify';
+import { MemoryStore, memoryTools } from './memory/memory';
+import { routineTools } from './agent/routines';
+import { detectSensitive } from './privacy/detectors';
+import type { Routine } from '@shared/settings';
 
 // One AI-DA per user. A second launch just brings up settings in the running instance.
 if (!app.requestSingleInstanceLock()) {
@@ -83,27 +92,74 @@ function start(): void {
     if (Notification.isSupported()) new Notification({ title: 'AI-DA', body: text }).show();
   });
 
+  const launcher = {
+    launchApp: (appId: string) => {
+      // Steam and other game launchers register links (steam://rungameid/730), not app ids.
+      if (launchKind(appId) === 'link') {
+        void shell.openExternal(appId);
+        return;
+      }
+      spawn('explorer.exe', [`shell:AppsFolder\\${appId}`], {
+        detached: true,
+        stdio: 'ignore',
+      }).unref();
+    },
+    openUrl: (url: string) => shell.openExternal(url),
+  };
+
+  // Weather (Open-Meteo, no key) and Spotify (the user's own developer app, PKCE sign-in).
+  const weather = new WeatherClient();
+  const temperatureUnit = (): TemperatureUnit => {
+    const { unit } = settings.get().weather;
+    if (unit !== 'auto') return unit;
+    return ['US', 'LR', 'MM', 'BS', 'KY', 'PW', 'FM', 'MH'].includes(app.getLocaleCountryCode())
+      ? 'fahrenheit'
+      : 'celsius';
+  };
+  const spotify = new SpotifyClient({
+    clientId: () => settings.get().spotify.clientId,
+    loadRefreshToken: () => vault.get('spotify'),
+    saveRefreshToken: (token) => (token ? vault.set('spotify', token) : vault.remove('spotify')),
+    openBrowser: (url) => shell.openExternal(url),
+  });
+
+  // What the user asked Aida to remember. Anything the Privacy Guard would mask is refused.
+  const memory = new MemoryStore(
+    paths.memoryFile(),
+    (text) =>
+      detectSensitive(text, { maskContactInfo: true, customValues: sensitive.values() }).length > 0,
+  );
+  const routines = {
+    list: () => settings.get().routines,
+    save: (next: Routine[]) => void settings.update({ routines: next }),
+  };
+
   const registry = new ToolRegistry().register(
     ...audioTools(win),
     ...mediaTools({ win, appName: (id) => apps.nameForAppId(id) }),
-    ...appTools(win, apps, {
-      launchApp: (appId) => {
-        // Steam and other game launchers register links (steam://rungameid/730), not app ids.
-        if (launchKind(appId) === 'link') {
-          void shell.openExternal(appId);
-          return;
-        }
-        spawn('explorer.exe', [`shell:AppsFolder\\${appId}`], {
-          detached: true,
-          stdio: 'ignore',
-        }).unref();
-      },
-      openUrl: (url) => shell.openExternal(url),
-    }),
+    ...appTools(win, apps, launcher),
     ...windowTools(win, sensitiveApps),
     ...uiTools({ win, sensitiveApps }),
     ...timeTools(),
     ...timerTools(timers),
+    ...weatherTools({
+      client: weather,
+      home: () => settings.get().weather.place,
+      unit: temperatureUnit,
+    }),
+    ...unitTools(),
+    ...memoryTools(memory),
+    ...routineTools(routines),
+    ...spotifyTools({
+      spotify,
+      hostname: hostname(),
+      openSpotify: async () => {
+        const found = await apps.best('spotify');
+        if (!found || !/^spotify\b/i.test(found.name)) return false;
+        launcher.launchApp(found.appId);
+        return true;
+      },
+    }),
     ...fileTools({
       knownFolders: Object.fromEntries(
         (['downloads', 'documents', 'desktop', 'pictures', 'music', 'videos', 'home'] as const).map(
@@ -154,6 +210,8 @@ function start(): void {
     log: actionLog,
     emit: (event) => palette.send(event),
     hasNetwork: () => connectivity.hasNetwork,
+    routines: routines.list,
+    memory,
   });
 
   // Tray state: voice activity wins, then typed commands, then idle/muted.
@@ -378,6 +436,38 @@ function start(): void {
         voice.start();
       },
       onChanged: (listener) => models.on('changed', listener),
+    },
+    weather: {
+      findPlace: async (city) => {
+        try {
+          const place = await weather.geocode(city);
+          if (!place) return { ok: false, error: `No place called “${city}” was found.` };
+          settings.update({ weather: { ...settings.get().weather, place } });
+          return { ok: true, name: place.name };
+        } catch {
+          return { ok: false, error: "Couldn't reach the weather service. Check your connection." };
+        }
+      },
+    },
+    memory: {
+      list: () => memory.snapshot(),
+      remove: (ids) => {
+        memory.remove(ids);
+        return memory.snapshot();
+      },
+      clear: () => {
+        memory.clear();
+        return memory.snapshot();
+      },
+      onChanged: (listener) => memory.onChanged(listener),
+    },
+    spotify: {
+      status: () => spotify.status(),
+      connect: () => spotify.connect(),
+      disconnect: async () => {
+        spotify.disconnect();
+        return spotify.status();
+      },
     },
     voice: {
       vadModel: () => voice.vadModel(),

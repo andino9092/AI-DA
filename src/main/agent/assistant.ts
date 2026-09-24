@@ -9,7 +9,9 @@ import type { JsonlLog } from '../safety/action-log';
 import type { ToolExecutor } from '../safety/executor';
 import type { ToolRegistry } from '../tools/registry';
 import type { ToolResult } from '../tools/types';
+import type { Routine } from '@shared/settings';
 import { parseInstant } from './instant-parser';
+import { matchRoutine } from './routines';
 
 const SYSTEM_PROMPT = PrivacyGuard.constant(
   [
@@ -34,7 +36,16 @@ export interface AssistantDeps {
   emit: (event: AssistantEvent) => void;
   /** False when the PC has no network at all: skip the AI instead of waiting on a timeout. */
   hasNetwork?: () => boolean;
+  /** Saved routines ("gaming mode" → several commands). */
+  routines?: () => readonly Routine[];
+  /** What the user asked Aida to remember: nicknames are applied to every command. */
+  memory?: {
+    expandNicknames(text: string): string;
+    promptFacts(): string[];
+  };
 }
+
+type Ctx = Parameters<ToolExecutor['execute']>[1];
 
 export interface HandleOptions {
   source: 'palette' | 'voice' | 'remote';
@@ -64,60 +75,108 @@ export class Assistant {
     log.write({ type: 'command', requestId, source: options.source, text: scrubbed.text });
     emit({ type: 'started', requestId });
 
-    try {
-      const ctx = {
-        requestId,
-        source: options.source,
-        session: conversation.session,
-        activeWindow: options.activeWindow,
-        signal,
-      };
+    const ctx: Ctx = {
+      requestId,
+      source: options.source,
+      session: conversation.session,
+      activeWindow: options.activeWindow,
+      signal,
+    };
+    const expand = (t: string) => this.deps.memory?.expandNicknames(t) ?? t;
 
-      // 1. Instant path: common commands, no LLM, nothing leaves the PC.
-      const planned = parseInstant(text);
-      if (planned) {
-        const results = await this.runInstant(planned, ctx);
-        if (results) {
-          log.write({ type: 'route', requestId, route: 'instant' });
-          // Keep local commands in the history so follow-ups ("and make it louder") make sense.
-          conversation.messages.push({ role: 'user', text: scrubbed.text });
-          return this.reply(requestId, conversation, results.map((r) => r.speak).join(' '), true);
+    // Routines: "gaming mode" runs each saved command in turn, as if said one after another.
+    const routine = matchRoutine(expand(text), this.deps.routines?.() ?? []);
+    if (routine) {
+      log.write({
+        type: 'route',
+        requestId,
+        route: 'routine',
+        text: guard.scrub(routine.name, conversation.session).text,
+      });
+      const replies: string[] = [];
+      let ok = true;
+      for (const step of routine.steps) {
+        if (signal.aborted) break;
+        // A routine never starts another routine, so two can't call each other forever.
+        try {
+          const result = await this.respond(expand(step), conversation, ctx);
+          ok &&= result.ok;
+          replies.push(result.text);
+          this.closeTurn(conversation, result.text);
+        } catch (err) {
+          ok = false;
+          const message = this.failure(err, requestId, conversation);
+          replies.push(message);
+          this.closeTurn(conversation, message);
+          if (signal.aborted) break;
         }
       }
+      return this.reply(requestId, conversation, replies.join(' ') || 'Done.', ok);
+    }
 
-      // 2. LLM path: only scrubbed text is sent.
-      if (this.deps.hasNetwork && !this.deps.hasNetwork()) {
-        log.write({ type: 'route', requestId, route: 'instant' });
-        return this.reply(
-          requestId,
-          conversation,
-          "I'm offline right now, so I can only do quick things like volume, music, apps, windows and timers.",
-          false,
-        );
-      }
-      log.write({ type: 'route', requestId, route: 'llm' });
-      emit({ type: 'status', requestId, text: 'Thinking…' });
-      conversation.messages.push({ role: 'user', text: scrubbed.text });
-      const reply = await this.runLlm(conversation, ctx);
-      return this.reply(requestId, conversation, reply, true);
+    try {
+      const result = await this.respond(expand(text), conversation, ctx);
+      return this.reply(requestId, conversation, result.text, result.ok);
     } catch (err) {
-      const message =
-        err instanceof NoProviderError
-          ? err.message
-          : err instanceof ProviderError && err.kind === 'aborted'
-            ? 'Cancelled.'
-            : `Something went wrong: ${err instanceof Error ? err.message : String(err)}`;
-      // The providers' own error text goes to the log (scrubbed) for troubleshooting.
-      const detail = err instanceof NoProviderError && err.detail ? ` [${err.detail}]` : '';
-      log.write({
-        type: 'error',
-        requestId,
-        text: guard.scrub(message + detail, conversation.session).text,
-      });
+      const message = this.failure(err, requestId, conversation);
       // Drop the half-finished exchange so the next request starts clean.
       this.conversation = null;
       return this.reply(requestId, conversation, message, false);
     }
+  }
+
+  /** Runs one command: the instant path if it parses, the AI otherwise. */
+  private async respond(
+    text: string,
+    conversation: Conversation,
+    ctx: Ctx,
+  ): Promise<{ text: string; ok: boolean }> {
+    const { guard, log, emit } = this.deps;
+    const { requestId } = ctx;
+    const scrubbed = guard.scrub(text, conversation.session);
+
+    // 1. Instant path: common commands, no LLM, nothing leaves the PC.
+    const planned = parseInstant(text);
+    if (planned) {
+      const results = await this.runInstant(planned, ctx);
+      if (results) {
+        log.write({ type: 'route', requestId, route: 'instant' });
+        // Keep local commands in the history so follow-ups ("and make it louder") make sense.
+        conversation.messages.push({ role: 'user', text: scrubbed.text });
+        return { text: results.map((r) => r.speak).join(' '), ok: true };
+      }
+    }
+
+    // 2. LLM path: only scrubbed text is sent.
+    if (this.deps.hasNetwork && !this.deps.hasNetwork()) {
+      log.write({ type: 'route', requestId, route: 'instant' });
+      return {
+        text: "I'm offline right now, so I can only do quick things like volume, music, apps, windows and timers.",
+        ok: false,
+      };
+    }
+    log.write({ type: 'route', requestId, route: 'llm' });
+    emit({ type: 'status', requestId, text: 'Thinking…' });
+    conversation.messages.push({ role: 'user', text: scrubbed.text });
+    return { text: await this.runLlm(conversation, ctx), ok: true };
+  }
+
+  /** What to say when a command fails; the details go to the log (scrubbed). */
+  private failure(err: unknown, requestId: string, conversation: Conversation): string {
+    const message =
+      err instanceof NoProviderError
+        ? err.message
+        : err instanceof ProviderError && err.kind === 'aborted'
+          ? 'Cancelled.'
+          : `Something went wrong: ${err instanceof Error ? err.message : String(err)}`;
+    // The providers' own error text goes to the log (scrubbed) for troubleshooting.
+    const detail = err instanceof NoProviderError && err.detail ? ` [${err.detail}]` : '';
+    this.deps.log.write({
+      type: 'error',
+      requestId,
+      text: this.deps.guard.scrub(message + detail, conversation.session).text,
+    });
+    return message;
   }
 
   /** Forget the current conversation (placeholders, history). */
@@ -162,10 +221,20 @@ export class Assistant {
     ctx: Parameters<ToolExecutor['execute']>[1],
   ): Promise<string> {
     const { router, registry, executor, guard, emit } = this.deps;
+    // Facts the user asked Aida to remember (never sensitive: the memory refuses those).
+    const facts = this.deps.memory?.promptFacts() ?? [];
+    const system = facts.length
+      ? PrivacyGuard.join(
+          SYSTEM_PROMPT,
+          PrivacyGuard.constant(' The user asked you to remember: '),
+          guard.scrub(facts.join('; '), conversation.session).text,
+          PrivacyGuard.constant('.'),
+        )
+      : SYSTEM_PROMPT;
 
     for (let step = 0; step < MAX_STEPS; step++) {
       const response = await router.complete(
-        { system: SYSTEM_PROMPT, messages: conversation.messages, tools: registry.specs() },
+        { system, messages: conversation.messages, tools: registry.specs() },
         ctx.requestId,
         ctx.signal,
       );
@@ -211,14 +280,20 @@ export class Assistant {
     return "I couldn't finish that in a reasonable number of steps.";
   }
 
-  private reply(requestId: string, conversation: Conversation, text: string, ok: boolean): string {
-    const { guard, log, emit } = this.deps;
-    const scrubbed = guard.scrub(text, conversation.session).text;
-    // Close the turn so the next message alternates correctly for every provider.
+  /** Close the turn so the next message alternates correctly for every provider. */
+  private closeTurn(conversation: Conversation, text: string): void {
     const last = conversation.messages.at(-1);
     if (last && last.role !== 'assistant')
-      conversation.messages.push({ role: 'assistant', text: scrubbed });
-    log.write({ type: 'reply', requestId, text: scrubbed });
+      conversation.messages.push({
+        role: 'assistant',
+        text: this.deps.guard.scrub(text, conversation.session).text,
+      });
+  }
+
+  private reply(requestId: string, conversation: Conversation, text: string, ok: boolean): string {
+    const { guard, log, emit } = this.deps;
+    this.closeTurn(conversation, text);
+    log.write({ type: 'reply', requestId, text: guard.scrub(text, conversation.session).text });
     emit({ type: 'reply', requestId, text, ok });
     return text;
   }
