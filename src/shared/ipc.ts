@@ -1,7 +1,7 @@
 import type { AssistantEvent } from './assistant';
 import type { ModelStatus } from './models';
 import type { AudioCommand, AudioEvent, MonitorEvent, OverlayState, Utterance } from './voice';
-import type { ProviderUsage } from './llm';
+import type { KeyTestResult, ProviderUsage } from './llm';
 import type { AddSensitiveValueResult, SensitiveValueSummary } from './privacy';
 import type { Settings, SettingsPatch } from './settings';
 import type { SecretName, SecretsSnapshot } from './secrets';
@@ -18,6 +18,7 @@ export const IPC = {
   privacyAdd: 'privacy:add',
   privacyRemove: 'privacy:remove',
   llmUsage: 'llm:usage',
+  llmTest: 'llm:test',
   appInfo: 'app:info',
   chooseFolder: 'dialog:choose-folder',
   openExternal: 'shell:open-external',
@@ -72,6 +73,8 @@ export interface AidaApi {
   };
   llm: {
     usage(): Promise<ProviderUsage[]>;
+    /** Sends one tiny request with the saved key and explains the result. */
+    testKey(provider: SecretName): Promise<KeyTestResult>;
   };
   app: {
     info(): Promise<AppInfo>;

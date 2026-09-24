@@ -55,6 +55,8 @@ describe('parseInstant', () => {
     ['can you open and...', null],
     ['open the video', null],
     ['set a timer for 10 minutes', [{ name: 'set_timer', args: { duration: '10 minutes' } }]],
+    // Speech recognition dropped "can" from "can you…".
+    ['You set a timer for one minute.', [{ name: 'set_timer', args: { duration: 'one minute' } }]],
     ['10 minute timer', [{ name: 'set_timer', args: { duration: '10 minute' } }]],
     [
       'remind me in 20 minutes to take out the laundry',

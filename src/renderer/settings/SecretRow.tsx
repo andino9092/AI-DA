@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import type { KeyTestResult } from '@shared/llm';
 import { SECRET_INFO, type SecretStatus, type SecretsSnapshot } from '@shared/secrets';
 import { Button } from './components';
 
@@ -16,6 +17,12 @@ export function SecretRow({
   const [value, setValue] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [test, setTest] = useState<KeyTestResult | 'testing' | null>(null);
+
+  async function runTest() {
+    setTest('testing');
+    setTest(await window.aida.llm.testKey(status.name));
+  }
 
   async function save() {
     setBusy(true);
@@ -29,6 +36,8 @@ export function SecretRow({
     setError(null);
     setEditing(false);
     onSaved(result.snapshot);
+    // Check the new key right away, so a typo shows up now rather than mid-command.
+    void runTest();
   }
 
   async function remove() {
@@ -97,6 +106,9 @@ export function SecretRow({
         </form>
       ) : (
         <div className="mt-3 flex gap-2">
+          <Button onClick={() => void runTest()} disabled={disabled || test === 'testing'}>
+            {test === 'testing' ? 'Testing…' : 'Test'}
+          </Button>
           <Button onClick={() => setEditing(true)} disabled={disabled}>
             Replace
           </Button>
@@ -106,6 +118,15 @@ export function SecretRow({
         </div>
       )}
       {error && <p className="mt-2 text-xs text-red-600 dark:text-red-400">{error}</p>}
+      {test && test !== 'testing' && (
+        <p
+          role="status"
+          className={`mt-2 text-xs ${test.ok ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}
+        >
+          {test.ok ? '✓ ' : ''}
+          {test.message}
+        </p>
+      )}
     </div>
   );
 }

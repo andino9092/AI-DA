@@ -33,16 +33,23 @@ const DOMAIN =
   /^[a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?:com|org|net|io|dev|app|ai|co|edu|gov|tv|me|gg|us|uk|ca)(?:\/\S*)?$/;
 
 function clean(text: string): string {
-  return text
-    .toLowerCase()
-    .replace(/[“”]/g, '"')
-    .replace(/[‘’]/g, "'")
-    .replace(/^(?:hey |ok |okay )?(?:aida|ada)[,!.]?\s+/, '')
-    .replace(/^(?:please |can you |could you |would you |will you )+/, '')
-    .replace(/\s+please$/, '')
-    .replace(/[.!?]+$/, '')
-    .replace(/\s+/g, ' ')
-    .trim();
+  return (
+    text
+      .toLowerCase()
+      .replace(/[“”]/g, '"')
+      .replace(/[‘’]/g, "'")
+      .replace(/^(?:hey |ok |okay )?(?:aida|ada)[,!.]?\s+/, '')
+      .replace(/^(?:please |can you |could you |would you |will you )+/, '')
+      // Speech recognition sometimes drops "can" from "can you set a timer…".
+      .replace(
+        /^you (?=(?:set|open|close|play|pause|skip|start|stop|turn|mute|unmute|switch|move|snap|click|press|scroll|remind|cancel|show)\b)/,
+        '',
+      )
+      .replace(/\s+please$/, '')
+      .replace(/[.!?]+$/, '')
+      .replace(/\s+/g, ' ')
+      .trim()
+  );
 }
 
 function num(value: string | undefined, fallback = DEFAULT_STEP): number {

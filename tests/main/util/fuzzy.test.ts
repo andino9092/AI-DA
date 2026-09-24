@@ -33,6 +33,12 @@ describe('fuzzy app matching', () => {
   it('scores unrelated names low', () => {
     expect(matchScore('photoshop', 'Discord')).toBeLessThan(0.6);
     expect(matchScore('xyz', 'Steam')).toBeLessThan(0.6);
+    expect(matchScore('room', 'Zoom')).toBeLessThan(0.6);
+  });
+
+  it('accepts a short name misheard by one letter', () => {
+    expect(matchScore('zan', 'Zen')).toBeGreaterThanOrEqual(0.6);
+    expect(matchScore('stean', 'Steam')).toBeGreaterThanOrEqual(0.6);
   });
 
   it('is case, accent and punctuation insensitive', () => {

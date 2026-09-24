@@ -112,6 +112,7 @@ export class GeminiProvider implements LlmProvider {
           classifyStatus(err.status),
           `Gemini: ${err.message}`,
           retryAfter(err.message),
+          err.status,
         );
       }
       throw new ProviderError(

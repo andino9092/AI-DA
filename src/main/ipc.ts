@@ -8,7 +8,7 @@ import {
 } from 'electron';
 import { z } from 'zod';
 import { IPC, type AppInfo, type SaveSecretResult } from '@shared/ipc';
-import type { ProviderUsage } from '@shared/llm';
+import type { KeyTestResult, ProviderUsage } from '@shared/llm';
 import type { AddSensitiveValueResult } from '@shared/privacy';
 import type { ModelStatus } from '@shared/models';
 import { settingsPatchSchema } from '@shared/settings';
@@ -24,6 +24,7 @@ interface Deps {
   sensitive: SensitiveValueStore;
   appInfo: () => AppInfo;
   usage: () => ProviderUsage[];
+  testKey: (provider: 'gemini' | 'groq') => Promise<KeyTestResult>;
   logsDir: string;
   palette: {
     submit(text: string): Promise<void>;
@@ -74,6 +75,7 @@ export function registerIpc({
   sensitive,
   appInfo,
   usage,
+  testKey,
   logsDir,
   palette,
   models,
@@ -117,6 +119,7 @@ export function registerIpc({
   handle(IPC.privacyRemove, (_e, id) => sensitive.remove(z.string().parse(id)));
 
   handle(IPC.llmUsage, () => usage());
+  handle(IPC.llmTest, (_e, provider) => testKey(secretNameSchema.parse(provider)));
 
   handle(IPC.appInfo, () => appInfo());
   handle(IPC.chooseFolder, async (event, defaultPath) => {

@@ -65,6 +65,14 @@ export function matchScore(query: string, name: string): number {
     const similarity = 1 - distance / Math.max(qCompact.length, c.length);
     best = Math.max(best, similarity);
   }
+  // Short names misheard by one letter ("zan" → "Zen"): one edit is a big fraction of a short
+  // word, so allow it when the first letter matches.
+  if (
+    qCompact.length >= 3 &&
+    qCompact.length <= 5 &&
+    candidates.some((c) => c.length <= 5 && c[0] === qCompact[0] && levenshtein(qCompact, c) === 1)
+  )
+    return Math.max(0.62, best >= 0.75 ? 0.7 * best : 0);
   if (best >= 0.75) return 0.7 * best;
   if (qCompact.length >= 3 && isSubsequence(qCompact, nCompact)) return 0.55;
   return 0.5 * best;

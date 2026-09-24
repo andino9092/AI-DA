@@ -30,8 +30,8 @@ import { JsonlLog } from './safety/action-log';
 import { ToolExecutor } from './safety/executor';
 import { ConfirmBroker } from './safety/confirm-broker';
 import { QuotaTracker } from './router/quota';
-import { LlmRouter } from './router/router';
-import { createProviderSource } from './providers/llm/factory';
+import { LlmRouter, testProvider } from './router/router';
+import { buildProvider, createProviderSource } from './providers/llm/factory';
 import { Assistant } from './agent/assistant';
 import { ModelManager } from './models/model-manager';
 import { VoiceService } from './voice/voice-service';
@@ -344,6 +344,19 @@ function start(): void {
           registered: shortcutStatus.panic,
         },
       };
+    },
+    testKey: async (id) => {
+      const key = vault.get(id);
+      if (!key) return { ok: false, message: 'No key saved yet.' };
+      return testProvider(
+        buildProvider(id, key, settings.get().llm[id].model),
+        {
+          system: PrivacyGuard.constant('Reply with the single word OK.'),
+          messages: [{ role: 'user', text: PrivacyGuard.constant('Say OK.') }],
+          tools: [],
+        },
+        outboundLog,
+      );
     },
     usage: () => {
       const { llm } = settings.get();

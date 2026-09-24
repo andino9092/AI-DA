@@ -88,6 +88,7 @@ export class GroqProvider implements LlmProvider {
           classifyStatus(err.status),
           `Groq: ${err.message}`,
           Number.isFinite(retry) && retry > 0 ? retry * 1000 : undefined,
+          err.status,
         );
       }
       throw new ProviderError(

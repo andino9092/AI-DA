@@ -25,6 +25,7 @@ const api: AidaApi = {
   },
   llm: {
     usage: () => ipcRenderer.invoke(IPC.llmUsage),
+    testKey: (provider) => ipcRenderer.invoke(IPC.llmTest, provider),
   },
   app: {
     info: () => ipcRenderer.invoke(IPC.appInfo),

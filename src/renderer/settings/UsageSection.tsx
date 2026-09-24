@@ -34,9 +34,13 @@ export function UsageSection({ settings }: { settings: Settings }) {
                 <span className="text-xs text-zinc-500 tabular-nums dark:text-zinc-400">
                   {!u.configured
                     ? 'No key'
-                    : u.coolingDown
-                      ? 'Rate-limited, retrying soon'
-                      : `${u.used} / ${u.limit}`}
+                    : u.coolingReason === 'auth'
+                      ? 'Key rejected: use Test above'
+                      : u.coolingReason === 'busy'
+                        ? 'Busy, trying others first'
+                        : u.coolingReason === 'rate_limit'
+                          ? 'Rate-limited, retrying soon'
+                          : `${u.used} / ${u.limit}`}
                 </span>
               </div>
               <div

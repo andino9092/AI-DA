@@ -9,6 +9,11 @@ import type { LlmProvider, ProviderId } from './types';
  * Builds the router's provider list from current settings and saved keys. Instances are cached
  * and rebuilt only when a key or model changes.
  */
+/** One provider instance for a key and model. */
+export function buildProvider(id: ProviderId, key: string, model: string): LlmProvider {
+  return id === 'gemini' ? new GeminiProvider(key, model) : new GroqProvider(key, model);
+}
+
 export function createProviderSource(
   settings: () => Settings,
   vault: SecretVault,
@@ -25,8 +30,7 @@ export function createProviderSource(
       const signature = `${model}:${key}`;
       let entry = cache.get(id);
       if (!entry || entry.signature !== signature) {
-        const provider =
-          id === 'gemini' ? new GeminiProvider(key, model) : new GroqProvider(key, model);
+        const provider = buildProvider(id, key, model);
         entry = { signature, provider };
         cache.set(id, entry);
       }

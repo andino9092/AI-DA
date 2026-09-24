@@ -107,10 +107,12 @@ export class Assistant {
           : err instanceof ProviderError && err.kind === 'aborted'
             ? 'Cancelled.'
             : `Something went wrong: ${err instanceof Error ? err.message : String(err)}`;
+      // The providers' own error text goes to the log (scrubbed) for troubleshooting.
+      const detail = err instanceof NoProviderError && err.detail ? ` [${err.detail}]` : '';
       log.write({
         type: 'error',
         requestId,
-        text: guard.scrub(message, conversation.session).text,
+        text: guard.scrub(message + detail, conversation.session).text,
       });
       // Drop the half-finished exchange so the next request starts clean.
       this.conversation = null;

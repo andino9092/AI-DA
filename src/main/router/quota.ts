@@ -4,6 +4,9 @@ import type { ProviderId } from '../providers/llm/types';
 import type { ProviderUsage } from '@shared/llm';
 import { writeFileAtomic } from '../util/atomic-write';
 
+/** rate_limit: 429 · auth: key rejected · busy: overloaded or unreachable (tried again if nothing else works). */
+export type CoolDownReason = 'rate_limit' | 'auth' | 'busy';
+
 const fileSchema = z.record(z.string(), z.object({ day: z.string(), count: z.number() }));
 
 /** Free-tier daily quotas reset at midnight Pacific time. */
@@ -17,7 +20,7 @@ export function quotaDay(now = new Date()): string {
  */
 export class QuotaTracker {
   private counts: Record<string, { day: string; count: number }>;
-  private readonly coolUntil = new Map<ProviderId, number>();
+  private readonly coolUntil = new Map<ProviderId, { until: number; reason: CoolDownReason }>();
 
   constructor(
     private readonly filePath: string,
@@ -40,12 +43,23 @@ export class QuotaTracker {
     }
   }
 
-  coolDown(provider: ProviderId, ms: number): void {
-    this.coolUntil.set(provider, this.now().getTime() + ms);
+  coolDown(provider: ProviderId, ms: number, reason: CoolDownReason = 'rate_limit'): void {
+    this.coolUntil.set(provider, { until: this.now().getTime() + ms, reason });
   }
 
   isCoolingDown(provider: ProviderId): boolean {
-    return (this.coolUntil.get(provider) ?? 0) > this.now().getTime();
+    return this.coolingReason(provider) !== null;
+  }
+
+  /** Why a provider is being skipped right now, or null if it isn't. */
+  coolingReason(provider: ProviderId): CoolDownReason | null {
+    const entry = this.coolUntil.get(provider);
+    return entry && entry.until > this.now().getTime() ? entry.reason : null;
+  }
+
+  /** A request worked: forget any cool-down. */
+  clear(provider: ProviderId): void {
+    this.coolUntil.delete(provider);
   }
 
   usage(provider: ProviderId, limit: number, configured: boolean): ProviderUsage {
@@ -55,6 +69,7 @@ export class QuotaTracker {
       used: this.used(provider),
       limit,
       coolingDown: this.isCoolingDown(provider),
+      coolingReason: this.coolingReason(provider),
     };
   }
 
