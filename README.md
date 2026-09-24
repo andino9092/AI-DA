@@ -2,8 +2,12 @@
 
 **AI Desktop Assistant**: a voice-first, privacy-first assistant that lives in the Windows system tray. It can open apps, click through UI, control volume and more, and it keeps sensitive information on your PC.
 
-> v2 is a ground-up rewrite. See [PLAN.md](PLAN.md) for the architecture, features and roadmap.
-> **Current phase: 3 built (computer control).** Say “Hey Aida, …”, hold **Ctrl+Alt+V** to talk, or **Ctrl+Alt+A** to type. Aida can play/pause per app, click buttons by name, type, scroll and press shortcuts. **Ctrl+Alt+Backspace** stops everything. Speech recognition and the voice run locally; download the models in Settings → Voice (~2 GB).
+> **v1.0.0**, a ground-up rewrite of the original AI-DA. See [PLAN.md](PLAN.md) for the architecture, features and roadmap.
+> Say “Hey Aida, …”, hold **Ctrl+Alt+V** to talk, or **Ctrl+Alt+A** to type. Aida plays and pauses music per app, opens apps, files, folders and Steam games, moves windows, clicks buttons by name, types, sets timers and switches audio devices. **Ctrl+Alt+Backspace** stops everything. Speech recognition and the voice run locally; the models download from Settings → Voice (~2 GB).
+
+## Install
+
+Download `AI-DA-Setup-1.0.0.exe` from the [latest release](https://github.com/andino9092/AI-DA/releases/latest) and run it. Windows SmartScreen may warn about an unknown publisher (the installer isn't code-signed yet): choose **More info → Run anyway**. The setup guide opens on first launch; add a free Gemini or Groq key there. Installed copies update themselves from GitHub Releases.
 
 ## Development
 

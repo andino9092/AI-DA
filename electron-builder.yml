@@ -28,6 +28,9 @@ win:
   target: nsis
   icon: build/icon.png
 nsis:
+  # No spaces: GitHub turns spaces in uploaded file names into dots, which would break the
+  # download link in latest.yml that auto-update reads.
+  artifactName: ${productName}-Setup-${version}.${ext}
   oneClick: false
   perMachine: false
   allowToChangeInstallationDirectory: true
