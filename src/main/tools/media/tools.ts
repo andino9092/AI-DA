@@ -6,7 +6,7 @@ import {
   type WindowInfo,
   type WindowsBridge,
 } from '../../native/win-host';
-import { matchScore } from '../../util/fuzzy';
+import { matchScore, normalizeName } from '../../util/fuzzy';
 import { findWindow } from '../windows/tools';
 import type { ToolResult } from '../types';
 import { defineTool } from '../types';
@@ -55,8 +55,12 @@ function track(s: Pick<MediaSession, 'title' | 'artist'>): string {
   return s.artist ? `${s.title} by ${s.artist}` : s.title;
 }
 
-function spoken(action: MediaCommand, s: MediaSession): string {
+function spoken(action: MediaCommand, s: MediaSession & { trackChanged?: boolean }): string {
   const what = track(s);
+  // The app never reported a new track: don't name the one that was just skipped.
+  if (action === 'next' && s.trackChanged === false) return 'Skipped.';
+  if (action === 'previous' && s.trackChanged === false)
+    return what ? `Back to the start of ${what}.` : 'Went back to the start.';
   switch (action) {
     case 'play':
       return what ? `Playing ${what}.` : 'Playing.';
@@ -71,6 +75,26 @@ function spoken(action: MediaCommand, s: MediaSession): string {
     case 'stop':
       return 'Stopped.';
   }
+}
+
+/** "(1) Some Video | Channel - YouTube — Zen Browser" → "Some Video | Channel". */
+export function pageTitle(windowTitle: string): string {
+  return windowTitle
+    .replace(
+      /\s+[—–-]\s+(?:[^—–-]+\s+[—–-]\s+)?(?:Zen Browser|Mozilla Firefox|Firefox|Google Chrome|Microsoft.? Edge|Brave|Opera|Vivaldi)$/i,
+      '',
+    )
+    .replace(/^\(\d+\+?\)\s*/, '')
+    .replace(/\s+-\s+(?:YouTube|Twitch|Netflix)$/i, '')
+    .trim();
+}
+
+/** Whether a media session's title is the page shown in this browser window. */
+export function isOnPage(sessionTitle: string, windowTitle: string): boolean {
+  const media = normalizeName(sessionTitle);
+  const page = normalizeName(pageTitle(windowTitle));
+  if (!media || !page) return false;
+  return page.includes(media) || media.includes(page);
 }
 
 /** "the Zen browser", "my Spotify app" → "Zen", "Spotify" (a bare "browser" stays as is). */
@@ -112,17 +136,23 @@ export function mediaTools({ win, appName, sleep = defaultSleep }: MediaDeps) {
   const nameOf = (appId: string) =>
     appName?.(appId)?.replace(/ Private Browsing$/, '') ?? mediaAppName(appId);
 
-  /**
-   * Nothing to control through Windows (a video that was never started, so the browser hasn't
-   * registered it): bring the window forward and press the page's own play key.
-   */
-  async function pressPlayInWindow(app: string): Promise<ToolResult | null> {
+  /** The window a media request is about: the named app's, or a browser showing a media site. */
+  async function mediaWindow(app: string): Promise<WindowInfo | null> {
     const windows = await win.listWindows();
-    const window: WindowInfo | null = BROWSER_WORDS.test(app)
+    return BROWSER_WORDS.test(app)
       ? (windows.find((w) => MEDIA_SITES.test(w.title) && BROWSER_NAMES.test(w.process)) ??
-        windows.find((w) => BROWSER_NAMES.test(w.process)) ??
-        null)
+          windows.find((w) => BROWSER_NAMES.test(w.process)) ??
+          null)
       : findWindow(windows, cleanAppName(app));
+  }
+
+  /**
+   * Play the video on the page itself: for a video that was never started (the browser hasn't
+   * registered it) or when the browser's session belongs to another tab. Brings the window
+   * forward and presses the page's own play key.
+   */
+  async function pressPlayInWindow(app: string, known?: WindowInfo): Promise<ToolResult | null> {
+    const window = known ?? (await mediaWindow(app));
     if (!window) return null;
     const browser = BROWSER_NAMES.test(window.process);
     // In a browser, only on sites where the key is known to mean play/pause.
@@ -144,12 +174,10 @@ export function mediaTools({ win, appName, sleep = defaultSleep }: MediaDeps) {
     await sleep(900);
     const label = window.process.charAt(0).toUpperCase() + window.process.slice(1);
     const session = pickSession(await win.mediaSessions(), window.process, nameOf);
-    if (session && session.status === 'playing')
+    // Only name the video if it's the one on the page (the session can be another tab's).
+    if (session?.status === 'playing' && (!browser || isOnPage(session.title, window.title)))
       return { ok: true, speak: spoken('play', session) };
-    return {
-      ok: true,
-      speak: `I pressed play in ${label}.`,
-    };
+    return { ok: true, speak: `I pressed play in ${label}.` };
   }
 
   return [
@@ -170,6 +198,24 @@ export function mediaTools({ win, appName, sleep = defaultSleep }: MediaDeps) {
       run: async ({ action, app }) => {
         if (app) {
           const session = pickSession(await win.mediaSessions(), app, nameOf);
+          // A browser has one media session, and it can belong to another tab or a feed preview
+          // rather than the video on screen. If the page shows a different video, play that one.
+          if (
+            session &&
+            (action === 'play' || action === 'toggle') &&
+            isBrowserSession(session.appId, nameOf(session.appId))
+          ) {
+            const window = await mediaWindow(BROWSER_WORDS.test(app) ? app : nameOf(session.appId));
+            if (
+              window &&
+              BROWSER_NAMES.test(window.process) &&
+              MEDIA_SITES.test(window.title) &&
+              !isOnPage(session.title, window.title)
+            ) {
+              const pressed = await pressPlayInWindow(app, window);
+              if (pressed) return pressed;
+            }
+          }
           if (session) {
             const state = await win.mediaControl(action, session.appId);
             if (!state.accepted)

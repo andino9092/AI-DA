@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import type { AnyTool, ToolContext } from '../../../src/main/tools/types';
-import { mediaAppName, mediaTools, pickSession } from '../../../src/main/tools/media/tools';
+import {
+  isOnPage,
+  mediaAppName,
+  mediaTools,
+  pageTitle,
+  pickSession,
+} from '../../../src/main/tools/media/tools';
 import { audioTools, findDevice } from '../../../src/main/tools/system/audio';
 import { describeElement, findElement, findText, uiTools } from '../../../src/main/tools/ui/tools';
 import { windowTools } from '../../../src/main/tools/windows/tools';
@@ -341,5 +347,61 @@ describe('media in browsers (Zen, YouTube)', () => {
     ];
     expect(pickSession(sessions, 'browser', (id) => appName(id) ?? id)?.title).toBe('B');
     expect(pickSession(sessions, 'spotify', (id) => appName(id) ?? id)).toBeNull();
+  });
+});
+
+describe('which video "play the YouTube video" means', () => {
+  const ZEN_ID = 'F0DC299D809B9700';
+  const appName = (id: string) => (id === ZEN_ID ? 'Zen' : null);
+
+  function setup(pageTitle: string, sessionTitle: string) {
+    const win = new FakeWindows();
+    win.windows.push({
+      handle: 7,
+      title: `(1) ${pageTitle} - YouTube — Zen Browser`,
+      process: 'zen',
+      pid: 20,
+      minimized: false,
+    });
+    win.sessions = [
+      { appId: ZEN_ID, status: 'paused', title: sessionTitle, artist: 'Chan', current: true },
+    ];
+    const media = tool(mediaTools({ win, appName, sleep: async () => {} }), 'media_control');
+    return { win, media };
+  }
+
+  it('resumes through Windows when the session is the video on screen', async () => {
+    const { win, media } = setup('Big Video | Chan', 'Big Video');
+    const result = await run(media, { action: 'play', app: 'youtube' }, ctx().context);
+    expect(result.speak).toBe('Playing Big Video by Chan.');
+    expect(win.keys).toEqual([]);
+  });
+
+  it('presses play on the page when the session belongs to another video (feed preview)', async () => {
+    const { win, media } = setup('Big Video | Chan', 'Some Feed Preview');
+    const result = await run(media, { action: 'play', app: 'youtube' }, ctx().context);
+    // It must not announce (or start) the other video.
+    expect(result.speak).toBe('I pressed play in Zen.');
+    expect(win.keys).toEqual(['k']);
+    expect(win.mediaCommands).toEqual([]);
+  });
+
+  it('reads page titles from browser window titles', () => {
+    expect(pageTitle('(12) Big Video | Chan - YouTube — Zen Browser')).toBe('Big Video | Chan');
+    expect(pageTitle('Big Video - YouTube - Google Chrome')).toBe('Big Video');
+    expect(isOnPage('Big Video', '(1) Big Video | Chan - YouTube — Zen Browser')).toBe(true);
+    expect(isOnPage('Other', 'YouTube — Zen Browser')).toBe(false);
+  });
+});
+
+describe('skip replies', () => {
+  it("doesn't name the old song when the app never reported a new one", async () => {
+    const win = new FakeWindows();
+    const media = tool(mediaTools({ win, sleep: async () => {} }), 'media_control');
+    win.mediaControl = async () => ({ ...win.sessions[0]!, accepted: true, trackChanged: false });
+    expect((await run(media, { action: 'next' }, ctx().context)).speak).toBe('Skipped.');
+    expect((await run(media, { action: 'previous' }, ctx().context)).speak).toBe(
+      'Back to the start of Song A by Band.',
+    );
   });
 });

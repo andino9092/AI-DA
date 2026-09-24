@@ -116,7 +116,7 @@ export class FakeWindows implements WindowsBridge {
     if (action === 'pause') session.status = 'paused';
     if (action === 'play') session.status = 'playing';
     if (action === 'next') session.title = 'Song B';
-    return { ...session, accepted: true };
+    return { ...session, accepted: true, trackChanged: action !== 'previous' };
   }
 
   foreground = 2;

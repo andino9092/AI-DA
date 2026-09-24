@@ -304,6 +304,9 @@ Each phase ends with something you can run and use.
     - **"Start the video" opened Movie Maker; "open and…" opened Fax and Scan:** media words and filler words are no longer app names.
     - **Tab titles sent your email address to Gemini:** text read off the screen now always has emails and phone numbers masked.
     - **The action log stopped being written** while another program held the file open; it now falls back to a second file instead of dropping lines.
+  - *Second live test (2026-09-24):* ducking ✅, hold-to-talk ✅, Claude "type and send" ✅, "close Spotify" confirmation ✅. Fixed:
+    - **Skipping named the old song:** Spotify updates its track info a second or two after a skip. The helper now waits (up to 3 s) until the title changes, and says just "Skipped." if it never does.
+    - **"Play the YouTube video" resumed a different video:** a browser has one media session, and Zen's belonged to another video (a feed preview or another tab). If the session's title isn't the page's, Aida now presses play on the page itself and doesn't announce the other title.
   - *Still to verify live:* Discord Send, hold-to-talk after the fix, spoken confirmations, the installed build.
 
 **Phase 4: Tailscale remote → v2.1 release** *(skipped for now, decided 2026-09-23)*

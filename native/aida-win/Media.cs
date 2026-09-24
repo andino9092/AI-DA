@@ -57,22 +57,36 @@ namespace Aida
             }
 
             IAsyncOperation<bool> operation;
-            int settleMs = 300;
+            bool skip = action == "next" || action == "previous";
+            string before = skip ? TrackKey(session) : null;
             switch (action)
             {
                 case "play": operation = session.TryPlayAsync(); break;
                 case "pause": operation = session.TryPauseAsync(); break;
                 case "toggle": operation = session.TryTogglePlayPauseAsync(); break;
-                case "next": operation = session.TrySkipNextAsync(); settleMs = 900; break;
-                case "previous": operation = session.TrySkipPreviousAsync(); settleMs = 900; break;
+                case "next": operation = session.TrySkipNextAsync(); break;
+                case "previous": operation = session.TrySkipPreviousAsync(); break;
                 case "stop": operation = session.TryStopAsync(); break;
                 default: throw new ArgumentException("Unknown media action: " + action);
             }
             bool accepted = WinRt.Await(operation, 5000);
-            // Give the app a moment to update its state and track info before reporting it.
-            Thread.Sleep(settleMs);
+            bool changed = true;
+            if (skip && accepted)
+            {
+                // Apps update the track info a moment after skipping (Spotify: up to a second or
+                // two). Wait for it, so the reply names the new song rather than the old one.
+                changed = false;
+                for (int waited = 0; waited < 3000 && !changed; waited += 150)
+                {
+                    Thread.Sleep(150);
+                    changed = TrackKey(session) != before;
+                }
+            }
+            else Thread.Sleep(300);
             Dictionary<string, object> state = Describe(session, mgr.GetCurrentSession());
             state["accepted"] = accepted;
+            // "previous" a few seconds into a song restarts it instead of changing track.
+            state["trackChanged"] = changed;
             return state;
         }
 
@@ -106,6 +120,16 @@ namespace Aida
         {
             try { return session.GetPlaybackInfo().PlaybackStatus; }
             catch (Exception) { return GlobalSystemMediaTransportControlsSessionPlaybackStatus.Closed; }
+        }
+
+        private static string TrackKey(GlobalSystemMediaTransportControlsSession session)
+        {
+            try
+            {
+                GlobalSystemMediaTransportControlsSessionMediaProperties props = WinRt.Await(session.TryGetMediaPropertiesAsync(), 1000);
+                return (props.Title ?? "") + "\n" + (props.Artist ?? "");
+            }
+            catch (Exception) { return ""; }
         }
 
         private static Dictionary<string, object> Describe(GlobalSystemMediaTransportControlsSession session, GlobalSystemMediaTransportControlsSession current)

@@ -130,7 +130,10 @@ export interface WindowsBridge {
   setDefaultAudioDevice(id: string): Promise<void>;
   mediaKey(action: MediaAction): Promise<void>;
   mediaSessions(): Promise<MediaSession[]>;
-  mediaControl(action: MediaCommand, app?: string): Promise<MediaSession & { accepted: boolean }>;
+  mediaControl(
+    action: MediaCommand,
+    app?: string,
+  ): Promise<MediaSession & { accepted: boolean; trackChanged: boolean }>;
   listWindows(): Promise<WindowInfo[]>;
   foregroundWindow(): Promise<number>;
   windowInfo(handle: number): Promise<WindowInfo>;
@@ -294,7 +297,7 @@ export class SidecarWindowsBridge implements WindowsBridge {
   async mediaControl(action: MediaCommand, app?: string) {
     try {
       return mediaSessionSchema
-        .extend({ accepted: z.boolean() })
+        .extend({ accepted: z.boolean(), trackChanged: z.boolean().default(true) })
         .parse(await this.call('media.control', { action, app: app ?? null }));
     } catch (err) {
       if (err instanceof Error && err.message.startsWith('NO_SESSION'))
