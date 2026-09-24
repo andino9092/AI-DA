@@ -66,6 +66,15 @@ export class Player {
         [300, 0],
         [220, 0.12],
       ],
+      // Timers and reminders: three quick double-beeps, easy to notice over music.
+      alarm: [
+        [880, 0],
+        [1175, 0.12],
+        [880, 0.45],
+        [1175, 0.57],
+        [880, 0.9],
+        [1175, 1.02],
+      ],
     };
     const t0 = this.ctx.currentTime + 0.01;
     for (const [freq, offset] of notes[kind]) {

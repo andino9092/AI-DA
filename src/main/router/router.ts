@@ -28,6 +28,8 @@ export class LlmRouter {
     private readonly providers: () => RoutedProvider[],
     private readonly quota: QuotaTracker,
     private readonly outbound: JsonlLog,
+    /** Told whether providers answered, for the offline indicator. */
+    private readonly health?: { reached(): void; unreachable(): void },
   ) {}
 
   async complete(
@@ -43,6 +45,8 @@ export class LlmRouter {
     }
 
     const failures: string[] = [];
+    let attempted = 0;
+    let networkFailures = 0;
     for (const { provider, dailyLimit } of candidates) {
       if (this.quota.isCoolingDown(provider.id)) {
         failures.push(`${provider.id} is rate-limited`);
@@ -66,19 +70,23 @@ export class LlmRouter {
         tools: request.tools.map((t) => t.name),
       });
 
+      attempted++;
       try {
         this.quota.record(provider.id);
         const response = await provider.complete(request, signal);
+        this.health?.reached();
         return { ...response, provider: provider.id };
       } catch (err) {
         if (!(err instanceof ProviderError)) throw err;
         if (err.kind === 'aborted') throw err;
+        if (err.kind === 'unavailable') networkFailures++;
         if (err.kind === 'rate_limit')
           this.quota.coolDown(provider.id, err.retryAfterMs ?? DEFAULT_COOL_DOWN_MS);
         if (err.kind === 'auth') this.quota.coolDown(provider.id, AUTH_COOL_DOWN_MS);
         failures.push(err.kind === 'auth' ? `${provider.id} rejected the API key` : err.message);
       }
     }
+    if (networkFailures > 0 && networkFailures === attempted) this.health?.unreachable();
     throw new NoProviderError(`I couldn't reach an AI provider (${failures.join('; ')}).`);
   }
 }

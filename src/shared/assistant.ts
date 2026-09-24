@@ -15,7 +15,7 @@ export const ASSISTANT_STATE_LABELS: Record<AssistantState, string> = {
   thinking: 'Thinking…',
   speaking: 'Speaking…',
   muted: 'Microphone muted',
-  offline: 'Offline',
+  offline: 'Offline (local commands still work)',
 };
 
 /** Progress of one command, streamed to the command palette (and later the overlay). */

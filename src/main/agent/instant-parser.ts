@@ -1,3 +1,4 @@
+import { parseDuration } from '../tools/info/timers';
 import { normalizeUrl } from '../tools/apps/tools';
 
 export interface PlannedCall {
@@ -92,6 +93,30 @@ function parseClause(clause: string): PlannedCall | null {
     /^(?:what(?:'s| is) the volume(?: at)?|(?:current )?volume level|how loud is it)$/.test(clause)
   )
     return { name: 'get_volume', args: {} };
+
+  // Timers and reminders (before media, so "stop the timer" isn't "pause the music").
+  if (
+    /^(?:cancel|stop|delete|clear|turn off) (?:the |my |all )?(?:(?:my )?timers?|reminders?|alarms?)$/.test(
+      clause,
+    )
+  )
+    return { name: 'cancel_timer', args: {} };
+  if (
+    /^(?:how (?:much time is|long is|long's) left(?: on (?:the|my) timer)?|how long (?:until|till|left on) (?:the |my )?timer|check (?:the |my )?timers?|what timers do i have)$/.test(
+      clause,
+    )
+  )
+    return { name: 'list_timers', args: {} };
+  if ((m = clause.match(/^remind me in (.+?) to (.+)$/)) && parseDuration(m[1]!))
+    return { name: 'set_timer', args: { duration: m[1], label: m[2] } };
+  if ((m = clause.match(/^remind me to (.+) in (.+)$/)) && parseDuration(m[2]!))
+    return { name: 'set_timer', args: { duration: m[2], label: m[1] } };
+  if (
+    ((m = clause.match(/^(?:set |start )?(?:a |an )?(?:timer|alarm)(?: for| of)? (.+)$/)) ||
+      (m = clause.match(/^(?:set |start )?(?:a |an )?(.+?) timer$/))) &&
+    parseDuration(m[1]!)
+  )
+    return { name: 'set_timer', args: { duration: m[1] } };
 
   // Per-app volume: "set spotify volume to 30", "discord volume 20", "mute chrome".
   if (
@@ -224,6 +249,25 @@ function parseClause(clause: string): PlannedCall | null {
     const t = target(m[1]!);
     return t && !NOT_AN_APP.test(t) ? { name: 'close_app', args: { name: t } } : null;
   }
+  // Folders and files: "open my downloads", "open the taxes folder", "open budget.xlsx".
+  if (
+    (m = clause.match(
+      /^(?:open|show(?: me)?|go to) (?:up )?((?:the |my )?(?!(?:a|an|new)\b).+? (?:folder|directory))$/,
+    )) ||
+    (m = clause.match(
+      /^(?:open|show(?: me)?|go to) (?:up )?((?:the |my )(?:downloads|documents|desktop|pictures|photos|music|videos))$/,
+    )) ||
+    (m = clause.match(/^(?:open|show(?: me)?|go to) (?:up )?(downloads|documents|desktop)$/))
+  )
+    return { name: 'open_folder', args: { name: m[1] } };
+  if (
+    (m = clause.match(/^open (?:the |my )?file (?:called |named )?(.+)$/)) ||
+    (m = clause.match(
+      /^open (?:the |my )?(.+\.(?:pdf|docx?|xlsx?|pptx?|txt|csv|md|png|jpe?g|gif|mp4|mp3|zip))$/,
+    ))
+  )
+    return { name: 'open_file', args: { name: m[1] } };
+
   // "start the video", "play the youtube video on zen": media, not an app called "video".
   if (
     (m = clause.match(

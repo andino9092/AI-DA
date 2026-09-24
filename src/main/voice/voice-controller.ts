@@ -176,6 +176,31 @@ export class VoiceController {
     });
   }
 
+  /**
+   * Something Aida brings up herself (a timer going off): alarm chime, then say it out loud when
+   * she isn't busy, otherwise just show it (it's also in a Windows notification).
+   */
+  announce(text: string): void {
+    this.deps.audio({ type: 'chime', chime: 'alarm' });
+    const { speakReplies } = this.deps.settings();
+    if (this.phase !== 'idle' || !speakReplies || !this.deps.canSpeak()) {
+      this.deps.overlay({ phase: 'reply', text }, 8000);
+      return;
+    }
+    this.phase = 'speaking';
+    this.lastReply = text;
+    this.deps.overlay({ phase: 'speaking', text });
+    // Let the chime finish before talking.
+    setTimeout(() => {
+      if (this.phase !== 'speaking' || this.speech) return;
+      void this.say(text).catch(() => {
+        this.speech = null;
+        this.deps.overlay({ phase: 'reply', text }, 8000);
+        this.toIdle(true);
+      });
+    }, 1300);
+  }
+
   /** Panic: stop talking, decline anything waiting for an answer, go back to idle. */
   panic(): void {
     this.clearHoldTimer();

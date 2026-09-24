@@ -4,7 +4,7 @@
  */
 export type ListenMode = 'off' | 'wake' | 'command';
 
-export type Chime = 'listen' | 'done' | 'error';
+export type Chime = 'listen' | 'done' | 'error' | 'alarm';
 
 export type WakeSensitivity = 'low' | 'normal' | 'high';
 

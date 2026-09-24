@@ -32,6 +32,8 @@ export interface AssistantDeps {
   router: LlmRouter;
   log: JsonlLog;
   emit: (event: AssistantEvent) => void;
+  /** False when the PC has no network at all: skip the AI instead of waiting on a timeout. */
+  hasNetwork?: () => boolean;
 }
 
 export interface HandleOptions {
@@ -84,6 +86,15 @@ export class Assistant {
       }
 
       // 2. LLM path: only scrubbed text is sent.
+      if (this.deps.hasNetwork && !this.deps.hasNetwork()) {
+        log.write({ type: 'route', requestId, route: 'instant' });
+        return this.reply(
+          requestId,
+          conversation,
+          "I'm offline right now, so I can only do quick things like volume, music, apps, windows and timers.",
+          false,
+        );
+      }
       log.write({ type: 'route', requestId, route: 'llm' });
       emit({ type: 'status', requestId, text: 'Thinking…' });
       conversation.messages.push({ role: 'user', text: scrubbed.text });

@@ -2,7 +2,7 @@
 
 **AI-DA (AI Desktop Assistant)** is a voice-first assistant for Windows that runs from the system tray. It hears you, understands what you mean and acts on your PC: it opens apps, clicks through UI, changes volume and more. It can also be controlled from your phone through Tailscale when you're away from your desk.
 
-Status: **Phase 3 built (real computer control), waiting on live checks. Phase 4 (Tailscale remote) skipped for now (decided 2026-09-23)** (last updated 2026-09-23).
+Status: **v2.0 feature-complete: Phases 0–3 plus the remaining MVP items (timers, files and folders, Steam games, offline indicator, first-run setup). Phase 4 (Tailscale remote) skipped for now (decided 2026-09-23)** (last updated 2026-09-24).
 
 ## Decisions made
 
@@ -308,6 +308,13 @@ Each phase ends with something you can run and use.
     - **Skipping named the old song:** Spotify updates its track info a second or two after a skip. The helper now waits (up to 3 s) until the title changes, and says just "Skipped." if it never does.
     - **"Play the YouTube video" resumed a different video:** a browser has one media session, and Zen's belonged to another video (a feed preview or another tab). If the session's title isn't the page's, Aida now presses play on the page itself and doesn't announce the other title.
   - *Still to verify live:* Discord Send, hold-to-talk after the fix, spoken confirmations, the installed build.
+
+**Finishing v2.0: remaining MVP items** ✅ *(built 2026-09-24)*
+- **Timers and reminders:**  /  / , parsed locally ("set a timer for 10 minutes", "remind me in 20 minutes to take out the laundry", "how much time is left"). Saved to , so they survive a restart; one that went off while AI-DA was closed is announced on the next start if it's under 10 minutes late. Going off plays an alarm chime, is spoken when Aida isn't busy, and shows a Windows notification.
+- **Files and folders:**  (Downloads, Documents, Desktop, Pictures, Music, Videos, home, or any folder by name) and  (recent files from Windows' Recent items, then Desktop/Documents/Downloads up to 4 levels, skipping node_modules/.git/AppData). Two equally good matches → Aida asks which; programs and scripts ask before running.
+- **Steam games:** Steam's Start-menu shortcuts are  links, which couldn't be launched through the Apps folder; link ids are now opened as links. The Steam libraries (from ) are also scanned for games without a shortcut (27 found on Andy's PC).
+- **Offline indicator:** the tray shows "Offline (local commands still work)" when Windows has no network or no AI provider answered in the last 2 minutes. With no network at all, requests that need the AI are answered right away instead of waiting on a timeout.
+- **First-run setup:** Welcome (privacy promises) → AI key → voice download → mic check → shortcuts. Every step can be skipped; Settings → General → "Run setup again".
 
 **Phase 4: Tailscale remote → v2.1 release** *(skipped for now, decided 2026-09-23)*
 - Add Tailscale detection, the tailnet-only gateway, QR pairing and the phone PWA.

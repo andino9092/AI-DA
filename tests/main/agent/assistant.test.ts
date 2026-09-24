@@ -23,6 +23,7 @@ function setup(options: {
   approve?: boolean;
   customValues?: string[];
   limits?: Record<string, number>;
+  hasNetwork?: boolean;
 }) {
   const dir = tempDir();
   const win = new FakeWindows();
@@ -72,6 +73,7 @@ function setup(options: {
     router,
     log: actions,
     emit: (e) => events.push(e),
+    hasNetwork: () => options.hasNetwork ?? true,
   });
   const readLogs = () =>
     readdirSync(join(dir, 'logs'))
@@ -260,5 +262,15 @@ describe('Privacy: nothing sensitive reaches a provider or a log', () => {
     expect(t.confirms[0]!.usesSensitiveValue).toBe(true);
     expect(t.confirms[0]!.summary).toContain('[CARD_1]');
     expect(t.opened).toEqual([]);
+  });
+});
+
+describe('Assistant: offline', () => {
+  it('does local commands but skips the AI when there is no network', async () => {
+    const gemini = new FakeProvider('gemini', []);
+    const t = setup({ providers: [gemini], hasNetwork: false });
+    expect(await t.run('set volume to 30')).toBe('Volume set to 30%.');
+    expect(await t.run('what is the capital of France')).toMatch(/offline/);
+    expect(gemini.requests).toHaveLength(0);
   });
 });

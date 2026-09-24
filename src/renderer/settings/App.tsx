@@ -8,6 +8,7 @@ import { PrivacySection } from './PrivacySection';
 import { UsageSection } from './UsageSection';
 import { VoiceSection } from './VoiceSection';
 import { ShortcutInput } from './ShortcutInput';
+import { Setup } from './Setup';
 
 export function App() {
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -36,7 +37,17 @@ export function App() {
   const update = (patch: SettingsPatch) =>
     void window.aida.settings.update(patch).then(setSettings);
   const modelsDir = settings.modelsDir ?? info.defaultModelsDir;
-  const anyKey = secrets.items.some((s) => s.configured);
+
+  if (!settings.firstRunComplete)
+    return (
+      <Setup
+        settings={settings}
+        secrets={secrets}
+        info={info}
+        update={update}
+        onSecrets={setSecrets}
+      />
+    );
 
   async function chooseModelsDir() {
     const picked = await window.aida.app.chooseFolder(modelsDir);
@@ -57,25 +68,6 @@ export function App() {
           </p>
         </div>
       </header>
-
-      {!settings.firstRunComplete && (
-        <div className="rounded-xl border border-accent/40 bg-accent/10 p-5">
-          <h2 className="text-sm font-semibold">Welcome to AI-DA</h2>
-          <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-300">
-            AI-DA lives in your system tray. To get started, add at least one free API key below.
-            Your voice, screen and sensitive information stay on this PC; only scrubbed text
-            requests go to the AI provider.
-          </p>
-          <Button
-            variant="primary"
-            className="mt-3"
-            disabled={!anyKey}
-            onClick={() => update({ firstRunComplete: true })}
-          >
-            {anyKey ? 'Finish setup' : 'Add a key to continue'}
-          </Button>
-        </div>
-      )}
 
       <Section
         title="AI providers"
@@ -157,6 +149,10 @@ export function App() {
           checked={settings.microphoneMuted}
           onChange={(v) => update({ microphoneMuted: v })}
         />
+        <div className="flex items-center justify-between gap-4">
+          <div className="text-sm">Setup guide</div>
+          <Button onClick={() => update({ firstRunComplete: false })}>Run setup again</Button>
+        </div>
       </Section>
 
       <Section

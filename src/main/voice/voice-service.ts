@@ -116,6 +116,11 @@ export class VoiceService {
     this.controller.pushToTalk();
   }
 
+  /** A timer or reminder going off. */
+  announce(text: string): void {
+    this.controller.announce(text);
+  }
+
   pushToTalkDown(): void {
     this.controller.pushToTalkDown();
   }

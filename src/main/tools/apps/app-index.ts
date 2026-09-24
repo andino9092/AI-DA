@@ -1,5 +1,5 @@
 import type { StartApp, WindowsBridge } from '../../native/win-host';
-import { rankByName, type Ranked } from '../../util/fuzzy';
+import { normalizeName, rankByName, type Ranked } from '../../util/fuzzy';
 
 /** Start-menu entries that are never what someone means by "open X". */
 const JUNK =
@@ -36,16 +36,30 @@ export class AppIndex {
   private loadedAt = 0;
   private loading: Promise<void> | null = null;
 
-  constructor(private readonly bridge: Pick<WindowsBridge, 'listStartApps'>) {}
+  constructor(
+    private readonly bridge: Pick<WindowsBridge, 'listStartApps'>,
+    /** More places to find apps, e.g. the Steam library for games without a Start-menu entry. */
+    private readonly extraSources: (() => Promise<StartApp[]>)[] = [],
+  ) {}
 
   /** Loads the Start menu in the background; results are cached for ten minutes. */
   refresh(force = false): Promise<void> {
     if (!force && this.apps.length && Date.now() - this.loadedAt < REFRESH_MS)
       return Promise.resolve();
-    this.loading ??= this.bridge
-      .listStartApps()
-      .then((apps) => {
-        this.apps = apps.filter((a) => a.name && a.appId && !JUNK.test(a.name));
+    this.loading ??= Promise.all([
+      this.bridge.listStartApps(),
+      ...this.extraSources.map((source) => source().catch(() => [])),
+    ])
+      .then(([startMenu, ...extra]) => {
+        // Start-menu entries win; extra sources (Steam library) only add what's missing.
+        const seen = new Set(startMenu.map((a) => normalizeName(a.name)));
+        const added = extra.flat().filter((a) => {
+          const key = normalizeName(a.name);
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        });
+        this.apps = [...startMenu, ...added].filter((a) => a.name && a.appId && !JUNK.test(a.name));
         this.loadedAt = Date.now();
       })
       .finally(() => {

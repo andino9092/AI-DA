@@ -1,4 +1,4 @@
-import { app, globalShortcut, safeStorage, session, shell } from 'electron';
+import { app, globalShortcut, net, Notification, safeStorage, session, shell } from 'electron';
 import { spawn } from 'node:child_process';
 import type { AssistantState } from '@shared/assistant';
 import { SettingsStore } from './settings/store';
@@ -14,13 +14,17 @@ import { SensitiveValueStore } from './privacy/sensitive-values';
 import { SidecarWindowsBridge } from './native/win-host';
 import { acceleratorToBinding } from './app/hotkeys';
 import { Updater, type UpdateState } from './app/updater';
+import { Connectivity } from './app/connectivity';
 import { AppIndex } from './tools/apps/app-index';
 import { appTools } from './tools/apps/tools';
+import { launchKind } from './tools/apps/launch';
+import { findSteamPath, steamGames } from './tools/apps/steam';
 import { audioTools } from './tools/system/audio';
 import { mediaTools } from './tools/media/tools';
 import { uiTools } from './tools/ui/tools';
 import { windowTools } from './tools/windows/tools';
 import { timeTools } from './tools/info/time';
+import { TimerService, timerMessage, timerTools } from './tools/info/timers';
 import { ToolRegistry } from './tools/registry';
 import { JsonlLog } from './safety/action-log';
 import { ToolExecutor } from './safety/executor';
@@ -32,7 +36,8 @@ import { Assistant } from './agent/assistant';
 import { ModelManager } from './models/model-manager';
 import { VoiceService } from './voice/voice-service';
 import { Ducker } from './voice/ducker';
-import { parse as parsePath } from 'node:path';
+import { join, parse as parsePath } from 'node:path';
+import { fileTools } from './tools/files/tools';
 
 // One AI-DA per user. A second launch just brings up settings in the running instance.
 if (!app.requestSingleInstanceLock()) {
@@ -68,14 +73,26 @@ function start(): void {
   const win = new SidecarWindowsBridge(paths.resources('native', 'aida-win.exe'));
   win.warmUp();
   const sensitiveApps = () => settings.get().privacy.sensitiveApps;
-  const apps = new AppIndex(win);
+  const apps = new AppIndex(win, [async () => steamGames(await findSteamPath())]);
   void apps.refresh().catch(() => {});
+
+  // Timers and reminders: announced out loud and as a Windows notification.
+  const timers = new TimerService(paths.timersFile(), (timer, late) => {
+    const text = timerMessage(timer, late);
+    voice.announce(text);
+    if (Notification.isSupported()) new Notification({ title: 'AI-DA', body: text }).show();
+  });
 
   const registry = new ToolRegistry().register(
     ...audioTools(win),
     ...mediaTools({ win, appName: (id) => apps.nameForAppId(id) }),
     ...appTools(win, apps, {
       launchApp: (appId) => {
+        // Steam and other game launchers register links (steam://rungameid/730), not app ids.
+        if (launchKind(appId) === 'link') {
+          void shell.openExternal(appId);
+          return;
+        }
         spawn('explorer.exe', [`shell:AppsFolder\\${appId}`], {
           detached: true,
           stdio: 'ignore',
@@ -86,6 +103,24 @@ function start(): void {
     ...windowTools(win, sensitiveApps),
     ...uiTools({ win, sensitiveApps }),
     ...timeTools(),
+    ...timerTools(timers),
+    ...fileTools({
+      knownFolders: Object.fromEntries(
+        (['downloads', 'documents', 'desktop', 'pictures', 'music', 'videos', 'home'] as const).map(
+          (name) => [name, app.getPath(name)],
+        ),
+      ),
+      searchRoots: [app.getPath('desktop'), app.getPath('documents'), app.getPath('downloads')],
+      recentDir: join(app.getPath('appData'), 'Microsoft', 'Windows', 'Recent'),
+      readShortcut: (path) => {
+        try {
+          return shell.readShortcutLink(path).target || null;
+        } catch {
+          return null;
+        }
+      },
+      openPath: (path) => shell.openPath(path),
+    }),
   );
 
   const actionLog = new JsonlLog(paths.logsDir(), 'actions');
@@ -102,7 +137,15 @@ function start(): void {
   const executor = new ToolExecutor(registry, guard, confirmBroker.request, actionLog);
   const quota = new QuotaTracker(paths.quotaFile());
   const providers = createProviderSource(() => settings.get(), vault);
-  const router = new LlmRouter(providers, quota, outboundLog);
+  // Offline indicator: no network, or the AI providers stopped answering.
+  const connectivity = new Connectivity(
+    () => net.isOnline(),
+    () => tray.update({ state: trayState() }),
+  );
+  const router = new LlmRouter(providers, quota, outboundLog, {
+    reached: () => connectivity.providerReached(),
+    unreachable: () => connectivity.providerUnreachable(),
+  });
   const assistant = new Assistant({
     guard,
     registry,
@@ -110,13 +153,21 @@ function start(): void {
     router,
     log: actionLog,
     emit: (event) => palette.send(event),
+    hasNetwork: () => connectivity.hasNetwork,
   });
 
   // Tray state: voice activity wins, then typed commands, then idle/muted.
   let voiceState: AssistantState | null = null;
   let running = 0;
   const trayState = (): AssistantState =>
-    voiceState ?? (running > 0 ? 'thinking' : settings.get().microphoneMuted ? 'muted' : 'idle');
+    voiceState ??
+    (running > 0
+      ? 'thinking'
+      : settings.get().microphoneMuted
+        ? 'muted'
+        : connectivity.online
+          ? 'idle'
+          : 'offline');
 
   // Commands run one at a time, in the order they were given (typed or spoken).
   let queue: Promise<unknown> = Promise.resolve();
@@ -336,6 +387,8 @@ function start(): void {
   });
 
   voice.start();
+  timers.start();
+  connectivity.start();
 
   let restoredSound = false;
   app.on('will-quit', (event) => {
@@ -349,6 +402,8 @@ function start(): void {
       return;
     }
     updater.dispose();
+    timers.dispose();
+    connectivity.stop();
     globalShortcut.unregisterAll();
     confirmBroker.cancelAll();
     models.cancelAll();
