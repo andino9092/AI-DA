@@ -4,6 +4,15 @@ import { PlaceholderSession, PrivacyGuard } from '../../../src/main/privacy/guar
 const guard = new PrivacyGuard(() => ({ maskContactInfo: false, customValues: [] }));
 
 describe('PrivacyGuard', () => {
+  it('always masks emails in text read off the screen, whatever the setting says', () => {
+    const tabs = { elements: ['#14 tabitem "Inbox - someone@gmail.com - Gmail"'] };
+    const said = guard.scrubJson({ text: 'email someone@gmail.com' }, new PlaceholderSession());
+    expect(said).toContain('someone@gmail.com');
+    const screen = guard.scrubJson(tabs, new PlaceholderSession(), { maskContactInfo: true });
+    expect(screen).not.toContain('someone@gmail.com');
+    expect(screen).toContain('[EMAIL_1]');
+  });
+
   it('replaces sensitive values with typed placeholders', () => {
     const session = new PlaceholderSession();
     const { text, findings } = guard.scrub(

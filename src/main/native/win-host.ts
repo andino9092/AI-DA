@@ -139,6 +139,8 @@ export interface WindowsBridge {
   uiSnapshot(handle: number, max?: number): Promise<UiSnapshot>;
   uiClick(id: number): Promise<{ method: string }>;
   uiFocus(id: number): Promise<void>;
+  /** What has keyboard focus right now (role, name), without reading the whole window. */
+  focusedElement(): Promise<{ role: string; name: string; password: boolean }>;
   uiScroll(handle: number, direction: 'up' | 'down', amount: number): Promise<void>;
   typeText(text: string): Promise<void>;
   sendKeys(keys: string): Promise<void>;
@@ -335,6 +337,12 @@ export class SidecarWindowsBridge implements WindowsBridge {
 
   async uiFocus(id: number) {
     await this.call('ui.focus', { id });
+  }
+
+  async focusedElement() {
+    return z
+      .object({ role: z.string(), name: z.string(), password: z.boolean().default(false) })
+      .parse(await this.call('ui.focused'));
   }
 
   async uiScroll(handle: number, direction: 'up' | 'down', amount: number) {

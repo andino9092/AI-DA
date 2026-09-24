@@ -2,6 +2,8 @@
 // Password fields are reported as such but their contents are never read.
 using System;
 using System.Collections.Generic;
+using System.Runtime.InteropServices;
+using System.Text;
 using System.Threading;
 using System.Windows;
 using System.Windows.Automation;
@@ -25,20 +27,67 @@ namespace Aida
         private const int MaxNameLength = 100;
         private const int MaxValueLength = 80;
 
+        private delegate bool EnumChildProc(IntPtr hWnd, IntPtr lParam);
+
+        [DllImport("oleacc.dll")] private static extern int AccessibleObjectFromWindow(IntPtr hWnd, uint id, ref Guid iid, [MarshalAs(UnmanagedType.IUnknown)] out object obj);
+        [DllImport("user32.dll")] private static extern bool EnumChildWindows(IntPtr parent, EnumChildProc callback, IntPtr lParam);
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetClassName(IntPtr hWnd, StringBuilder name, int max);
+
+        private const uint OBJID_CLIENT = 0xFFFFFFFC;
+        private static readonly Guid IID_IAccessible = new Guid("618736E0-3C3D-11CF-810C-00AA00389B71");
+        /// <summary>Enough controls that the app's accessibility tree has clearly been built.</summary>
+        private const int SettledCount = 12;
+        private const int SettleTimeoutMs = 2500;
+
+        private static string ClassName(IntPtr hWnd)
+        {
+            StringBuilder name = new StringBuilder(128);
+            GetClassName(hWnd, name, name.Capacity);
+            return name.ToString();
+        }
+
+        /// <summary>
+        /// Chromium apps (Discord, Claude, Spotify, Chrome) and Firefox browsers (Zen) only build their
+        /// accessibility tree once an assistive tool asks for it. Asking for the page's accessible
+        /// object turns it on for the rest of the app's life. Returns whether this is such an app.
+        /// </summary>
+        private static bool WakeAccessibility(IntPtr hWnd)
+        {
+            List<IntPtr> targets = new List<IntPtr>();
+            if (ClassName(hWnd) == "MozillaWindowClass") targets.Add(hWnd);
+            EnumChildWindows(hWnd, delegate (IntPtr child, IntPtr l)
+            {
+                string cls = ClassName(child);
+                if (cls == "Chrome_RenderWidgetHostHWND" || cls == "MozillaWindowClass") targets.Add(child);
+                return true;
+            }, IntPtr.Zero);
+            foreach (IntPtr target in targets)
+            {
+                Guid iid = IID_IAccessible;
+                object accessible;
+                if (AccessibleObjectFromWindow(target, OBJID_CLIENT, ref iid, out accessible) == 0 && accessible != null)
+                    Marshal.ReleaseComObject(accessible);
+            }
+            return targets.Count > 0;
+        }
+
         public static Dictionary<string, object> Snapshot(long handle, int max)
         {
             lock (Gate)
             {
                 IntPtr hWnd = new IntPtr(handle);
+                Win.RECT r = Win.Bounds(hWnd);
+                Rect window = new Rect(r.Left, r.Top, Math.Max(0, r.Right - r.Left), Math.Max(0, r.Bottom - r.Top));
+                bool web = WakeAccessibility(hWnd);
                 AutomationElement root = AutomationElement.FromHandle(hWnd);
 
-                AutomationElementCollection found = Find(root);
-                // Chromium-based apps (Discord, Spotify, browsers) build their accessibility tree
-                // only once a screen reader-like client asks, so the first look can come back thin.
-                if (found.Count < 8)
+                List<AutomationElement> found = Collect(root, window);
+                // A freshly woken app fills its tree in over a second or two: wait until it has.
+                DateTime deadline = DateTime.UtcNow.AddMilliseconds(web ? SettleTimeoutMs : 0);
+                while (found.Count < SettledCount && DateTime.UtcNow < deadline)
                 {
-                    Thread.Sleep(600);
-                    found = Find(root);
+                    Thread.Sleep(300);
+                    found = Collect(root, window);
                 }
 
                 elements = new Dictionary<int, AutomationElement>();
@@ -50,10 +99,8 @@ namespace Aida
                     ControlType type = (ControlType)el.GetCachedPropertyValue(AutomationElement.ControlTypeProperty);
                     string name = Clip((string)el.GetCachedPropertyValue(AutomationElement.NameProperty), MaxNameLength);
                     Rect box = (Rect)el.GetCachedPropertyValue(AutomationElement.BoundingRectangleProperty);
-                    if (box.IsEmpty || box.Width < 1 || box.Height < 1) continue;
 
                     bool isText = type == ControlType.Text;
-                    if (!isText && !Actionable.Contains(type)) continue;
                     if (isText && (name.Length == 0 || texts >= MaxTextElements)) continue;
                     if (list.Count >= max) { truncated = true; break; }
                     if (isText) texts++;
@@ -86,7 +133,24 @@ namespace Aida
             }
         }
 
-        private static AutomationElementCollection Find(AutomationElement root)
+        /// <summary>Only the control types we report, so big web pages don't ship every node across.</summary>
+        private static readonly Condition Wanted = BuildWanted();
+
+        private static Condition BuildWanted()
+        {
+            List<Condition> types = new List<Condition>();
+            types.Add(new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Text));
+            foreach (ControlType type in Actionable)
+                types.Add(new PropertyCondition(AutomationElement.ControlTypeProperty, type));
+            return new AndCondition(Automation.ControlViewCondition, new OrCondition(types.ToArray()));
+        }
+
+        /// <summary>
+        /// Actionable controls and labelled text that are inside the window's visible area. Position
+        /// decides visibility, because Firefox-based browsers report every control as "offscreen"
+        /// whenever their window isn't the active one.
+        /// </summary>
+        private static List<AutomationElement> Collect(AutomationElement root, Rect window)
         {
             CacheRequest cache = new CacheRequest();
             cache.AutomationElementMode = AutomationElementMode.Full;
@@ -98,13 +162,21 @@ namespace Aida
             cache.Add(AutomationElement.IsPasswordProperty);
             cache.Add(AutomationElement.HasKeyboardFocusProperty);
             cache.Add(ValuePattern.ValueProperty);
+            AutomationElementCollection all;
             using (cache.Activate())
+                all = root.FindAll(TreeScope.Descendants, Wanted);
+
+            List<AutomationElement> result = new List<AutomationElement>();
+            foreach (AutomationElement el in all)
             {
-                Condition visible = new AndCondition(
-                    Automation.ControlViewCondition,
-                    new PropertyCondition(AutomationElement.IsOffscreenProperty, false));
-                return root.FindAll(TreeScope.Descendants, visible);
+                ControlType type = (ControlType)el.GetCachedPropertyValue(AutomationElement.ControlTypeProperty);
+                if (type != ControlType.Text && !Actionable.Contains(type)) continue;
+                Rect box = (Rect)el.GetCachedPropertyValue(AutomationElement.BoundingRectangleProperty);
+                if (box.IsEmpty || box.Width < 1 || box.Height < 1) continue;
+                if (!window.IsEmpty && !window.IntersectsWith(box)) continue;
+                result.Add(el);
             }
+            return result;
         }
 
         private static string Role(ControlType type)
@@ -177,6 +249,15 @@ namespace Aida
             }
         }
 
+        /// <summary>Role and name of whatever has keyboard focus (fast: no tree walk).</summary>
+        public static Dictionary<string, object> Focused()
+        {
+            AutomationElement el = AutomationElement.FocusedElement;
+            if (el == null) return Json.Obj("role", "", "name", "");
+            AutomationElement.AutomationElementInformation info = el.Current;
+            return Json.Obj("role", Role(info.ControlType), "name", Clip(info.Name, MaxNameLength), "password", info.IsPassword);
+        }
+
         public static bool Focus(int id)
         {
             AutomationElement el = Get(id);
@@ -216,9 +297,8 @@ namespace Aida
             try
             {
                 AutomationElement root = AutomationElement.FromHandle(hWnd);
-                AutomationElement area = root.FindFirst(TreeScope.Descendants, new AndCondition(
-                    new PropertyCondition(AutomationElement.IsScrollPatternAvailableProperty, true),
-                    new PropertyCondition(AutomationElement.IsOffscreenProperty, false)));
+                AutomationElement area = root.FindFirst(TreeScope.Descendants,
+                    new PropertyCondition(AutomationElement.IsScrollPatternAvailableProperty, true));
                 if (area != null)
                 {
                     ScrollPattern scroll = (ScrollPattern)area.GetCurrentPattern(ScrollPattern.Pattern);

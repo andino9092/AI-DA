@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { AnyTool, ToolContext } from '../../../src/main/tools/types';
-import { mediaAppName, mediaTools } from '../../../src/main/tools/media/tools';
+import { mediaAppName, mediaTools, pickSession } from '../../../src/main/tools/media/tools';
 import { audioTools, findDevice } from '../../../src/main/tools/system/audio';
 import { describeElement, findElement, findText, uiTools } from '../../../src/main/tools/ui/tools';
 import { windowTools } from '../../../src/main/tools/windows/tools';
@@ -30,7 +30,7 @@ const run = (t: AnyTool, args: unknown, c: ToolContext) => t.run(t.input.parse(a
 describe('media tools', () => {
   it('pauses explicitly instead of toggling, and names the track on play and skip', async () => {
     const win = new FakeWindows();
-    const media = tool(mediaTools(win), 'media_control');
+    const media = tool(mediaTools({ win, sleep: async () => {} }), 'media_control');
     expect((await run(media, { action: 'pause' }, ctx().context)).speak).toBe('Paused.');
     expect((await run(media, { action: 'play' }, ctx().context)).speak).toBe(
       'Playing Song A by Band.',
@@ -39,23 +39,27 @@ describe('media tools', () => {
       'Next up: Song B by Band.',
     );
     expect(win.mediaCommands.map((c) => c.action)).toEqual(['pause', 'play', 'next']);
-    expect(win.mediaCommands[2]!.app).toBe('spotify');
+    expect(win.mediaCommands[2]!.app).toBe('Spotify.exe');
     expect(win.media).toEqual([]);
   });
 
   it('falls back to the media key when no app reports a session', async () => {
     const win = new FakeWindows();
     win.sessions = [];
-    const media = tool(mediaTools(win), 'media_control');
+    const media = tool(mediaTools({ win, sleep: async () => {} }), 'media_control');
     expect((await run(media, { action: 'pause' }, ctx().context)).ok).toBe(true);
     expect(win.media).toEqual(['play_pause']);
+    // Spotify is open but hasn't reported a session: press play in its window instead.
     const named = await run(media, { action: 'play', app: 'spotify' }, ctx().context);
-    expect(named.ok).toBe(false);
+    expect(named).toMatchObject({ ok: true, speak: 'I pressed play in Spotify.' });
+    expect(win.keys).toEqual(['space']);
+    const missing = await run(media, { action: 'play', app: 'steam' }, ctx().context);
+    expect(missing.ok).toBe(false);
   });
 
   it("says what's playing, or what's paused", async () => {
     const win = new FakeWindows();
-    const now = tool(mediaTools(win), 'now_playing');
+    const now = tool(mediaTools({ win, sleep: async () => {} }), 'now_playing');
     expect((await run(now, {}, ctx().context)).speak).toBe('Song A by Band, on Spotify.');
     win.sessions[0]!.status = 'paused';
     expect((await run(now, {}, ctx().context)).speak).toBe(
@@ -267,5 +271,75 @@ describe('per-app volume and output devices', () => {
     expect(findDevice(devices, 'jbl')?.id).toBe('b');
     expect(findDevice(devices, 'monitor')?.id).toBe('a');
     expect(findDevice(devices, 'speakers')?.id).toBe('b');
+  });
+});
+
+describe('media in browsers (Zen, YouTube)', () => {
+  const ZEN_ID = 'F0DC299D809B9700';
+  const appName = (id: string) =>
+    id.startsWith(ZEN_ID) ? 'Zen' : id === 'Spotify.exe' ? 'Spotify' : null;
+
+  function setup() {
+    const win = new FakeWindows();
+    win.windows.push({
+      handle: 7,
+      title: 'Some Video - YouTube — Zen Browser',
+      process: 'zen',
+      pid: 20,
+      minimized: false,
+    });
+    const tools = mediaTools({ win, appName, sleep: async () => {} });
+    return { win, media: tool(tools, 'media_control'), now: tool(tools, 'now_playing') };
+  }
+
+  it("finds Zen's session by name even though Windows only reports an id", async () => {
+    const { win, media, now } = setup();
+    win.sessions = [
+      { appId: 'Spotify.exe', status: 'paused', title: 'Song A', artist: 'Band', current: false },
+      { appId: ZEN_ID, status: 'paused', title: 'Some Video', artist: 'Channel', current: true },
+    ];
+    for (const app of ['Zen', 'zen browser', 'the browser', 'YouTube']) {
+      const result = await run(media, { action: 'play', app }, ctx().context);
+      expect(result.speak).toBe('Playing Some Video by Channel.');
+    }
+    expect(win.mediaCommands.every((c) => c.app === ZEN_ID)).toBe(true);
+    expect((await run(now, {}, ctx().context)).speak).toBe('Some Video by Channel, on Zen.');
+  });
+
+  it("presses YouTube's play key for a video that was never started", async () => {
+    const { win, media } = setup();
+    win.sessions = [];
+    win.focused = { role: 'combobox', name: 'Search or enter address', password: false };
+    let presses = 0;
+    const original = win.sendKeys.bind(win);
+    win.sendKeys = async (keys: string) => {
+      await original(keys);
+      // The first F6 moves focus from the address bar into the page.
+      if (keys === 'f6' && ++presses === 1)
+        win.focused = { role: 'document', name: 'YouTube', password: false };
+    };
+    const result = await run(media, { action: 'play', app: 'Zen' }, ctx().context);
+    expect(result).toMatchObject({ ok: true, speak: 'I pressed play in Zen.' });
+    expect(win.keys).toEqual(['f6', 'k']);
+    expect(win.actions).toContainEqual({ handle: 7, action: 'focus' });
+  });
+
+  it('never presses keys into a password field, and never for "pause"', async () => {
+    const { win, media } = setup();
+    win.sessions = [];
+    win.focused = { role: 'edit', name: 'Password', password: true };
+    expect((await run(media, { action: 'play', app: 'Zen' }, ctx().context)).ok).toBe(false);
+    win.focused = { role: 'document', name: 'YouTube', password: false };
+    expect((await run(media, { action: 'pause', app: 'Zen' }, ctx().context)).ok).toBe(false);
+    expect(win.keys).toEqual([]);
+  });
+
+  it('picks the playing session when several match', () => {
+    const sessions = [
+      { appId: ZEN_ID, status: 'paused', title: 'A', artist: '', current: true },
+      { appId: 'Chrome', status: 'playing', title: 'B', artist: '', current: false },
+    ];
+    expect(pickSession(sessions, 'browser', (id) => appName(id) ?? id)?.title).toBe('B');
+    expect(pickSession(sessions, 'spotify', (id) => appName(id) ?? id)).toBeNull();
   });
 });

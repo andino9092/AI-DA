@@ -19,6 +19,8 @@ const RISKY_KEYS =
   /(?:^|\s)(?:alt\+f4|ctrl\+w|ctrl\+q|ctrl\+shift\+w|shift\+delete|delete)(?:\s|$)/i;
 
 const ELEMENT_MATCH_THRESHOLD = 0.7;
+/** Finding a control by name looks at the whole window; read_screen shows the model fewer. */
+const SEARCH_MAX = 3000;
 const FIELD_ROLES = new Set(['edit', 'document', 'combobox']);
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -107,7 +109,9 @@ export function describeElement(e: UiElement): string {
 /** Wraps a tool body so a sensitive window gets a plain refusal instead of an error. */
 async function guarded(run: () => Promise<ToolResult>): Promise<ToolResult> {
   try {
-    return await run();
+    const result = await run();
+    // Anything these tools return as data was read off the screen.
+    return result.data === undefined ? result : { ...result, fromScreen: true };
   } catch (err) {
     if (err instanceof SensitiveWindowError) return { ok: false, speak: err.message };
     if (err instanceof StaleElementError) return { ok: false, speak: err.message, followUp: true };
@@ -226,7 +230,7 @@ export function uiTools(deps: UiToolDeps) {
               followUp: true,
             };
 
-          const snap = await win.uiSnapshot(window.handle);
+          const snap = await win.uiSnapshot(window.handle, SEARCH_MAX);
           const { best, candidates } = findElement(snap.elements, args.target);
           if (best) {
             if (!(await confirmRisky(ctx, best.name, window)))
@@ -280,7 +284,7 @@ export function uiTools(deps: UiToolDeps) {
           await bringToFront(win, window);
           if (args.field) {
             assertReadable(window, deps);
-            const snap = await win.uiSnapshot(window.handle);
+            const snap = await win.uiSnapshot(window.handle, SEARCH_MAX);
             const { best, candidates } = findElement(snap.elements, args.field, FIELD_ROLES);
             if (!best)
               return {

@@ -30,6 +30,7 @@ export type OutboundEntry = {
 };
 
 const RETENTION_DAYS = 30;
+const MAX_BACKLOG = 5000;
 
 /**
  * Append-only JSON Lines logs, one file per day and kind (actions-YYYY-MM-DD.jsonl,
@@ -45,14 +46,29 @@ export class JsonlLog {
     this.prune();
   }
 
+  /** Lines that couldn't be written yet (the file was held open by another program). */
+  private backlog: string[] = [];
+  private warned = false;
+
   write(entry: LogEntry | OutboundEntry): void {
+    this.backlog.push(JSON.stringify({ ts: new Date().toISOString(), ...entry }));
+    if (this.backlog.length > MAX_BACKLOG)
+      this.backlog.splice(0, this.backlog.length - MAX_BACKLOG);
     const day = new Date().toISOString().slice(0, 10);
-    const line = JSON.stringify({ ts: new Date().toISOString(), ...entry });
-    try {
-      appendFileSync(join(this.dir, `${this.prefix}-${day}.jsonl`), `${line}\n`, 'utf8');
-    } catch {
-      // Logging must never break the assistant.
+    const text = `${this.backlog.join('\n')}\n`;
+    // A viewer (e.g. Explorer's preview pane) can hold the day's file open without letting
+    // others write. Then use a second file, and keep lines in memory if that fails too.
+    for (const name of [`${this.prefix}-${day}.jsonl`, `${this.prefix}-${day}-2.jsonl`]) {
+      try {
+        appendFileSync(join(this.dir, name), text, 'utf8');
+        this.backlog = [];
+        return;
+      } catch (err) {
+        if (!this.warned) console.error(`[AI-DA] couldn't write ${name}:`, err);
+        this.warned = true;
+      }
     }
+    // Logging must never break the assistant; the lines are retried on the next write.
   }
 
   private prune(): void {

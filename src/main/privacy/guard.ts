@@ -60,8 +60,16 @@ export class PrivacyGuard {
     return text as ScrubbedText;
   }
 
-  scrub(text: string, session: PlaceholderSession): ScrubResult {
-    const found = detectSensitive(text, this.options());
+  /**
+   * overrides: stricter rules for one call, e.g. always masking emails and phone numbers in text
+   * read off the screen (the setting exists for commands you say, like "email John").
+   */
+  scrub(
+    text: string,
+    session: PlaceholderSession,
+    overrides: Partial<DetectOptions> = {},
+  ): ScrubResult {
+    const found = detectSensitive(text, { ...this.options(), ...overrides });
     if (found.length === 0) return { text: text as ScrubbedText, findings: [] };
 
     let out = '';
@@ -77,8 +85,12 @@ export class PrivacyGuard {
   }
 
   /** Scrubs every string inside a JSON-like value (tool results) and serialises it. */
-  scrubJson(value: unknown, session: PlaceholderSession): ScrubbedText {
-    return this.scrub(JSON.stringify(value), session).text;
+  scrubJson(
+    value: unknown,
+    session: PlaceholderSession,
+    overrides: Partial<DetectOptions> = {},
+  ): ScrubbedText {
+    return this.scrub(JSON.stringify(value), session, overrides).text;
   }
 
   /** Puts real values back into placeholder tokens in tool arguments, for local use only. */

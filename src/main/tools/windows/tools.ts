@@ -68,6 +68,7 @@ export function windowTools(win: WindowsBridge, sensitiveApps: () => readonly st
               ? `I couldn't find a window for ${target}.`
               : "I'm not sure which window you mean.",
             data: { openWindows: windows.map((w) => label(w)) },
+            fromScreen: true,
             followUp: true,
           };
         }
@@ -97,6 +98,7 @@ export function windowTools(win: WindowsBridge, sensitiveApps: () => readonly st
             })),
           },
           followUp: true,
+          fromScreen: true,
         };
       },
     }),

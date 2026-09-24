@@ -183,6 +183,7 @@ export class Assistant {
           content: guard.scrubJson(
             { ok: result.ok, message: result.speak, data: result.data },
             conversation.session,
+            result.fromScreen ? { maskContactInfo: true } : {},
           ),
         })),
       });

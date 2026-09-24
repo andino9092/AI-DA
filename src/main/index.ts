@@ -31,6 +31,8 @@ import { createProviderSource } from './providers/llm/factory';
 import { Assistant } from './agent/assistant';
 import { ModelManager } from './models/model-manager';
 import { VoiceService } from './voice/voice-service';
+import { Ducker } from './voice/ducker';
+import { parse as parsePath } from 'node:path';
 
 // One AI-DA per user. A second launch just brings up settings in the running instance.
 if (!app.requestSingleInstanceLock()) {
@@ -71,7 +73,7 @@ function start(): void {
 
   const registry = new ToolRegistry().register(
     ...audioTools(win),
-    ...mediaTools(win),
+    ...mediaTools({ win, appName: (id) => apps.nameForAppId(id) }),
     ...appTools(win, apps, {
       launchApp: (appId) => {
         spawn('explorer.exe', [`shell:AppsFolder\\${appId}`], {
@@ -155,7 +157,16 @@ function start(): void {
     actionLog.write({ type: 'panic' });
   };
 
+  // Turns other apps down while Aida listens or talks (Settings → Voice).
+  const ducker = new Ducker(win, {
+    enabled: () => settings.get().voice.duckOthers,
+    ownProcess: parsePath(process.execPath).name,
+    stateFile: paths.duckedFile(),
+  });
+  void ducker.recover();
+
   const voice = new VoiceService({
+    duck: (on) => void ducker.set(on),
     settings: () => settings.get(),
     models,
     handleCommand: (text, activeWindow) => runCommand(text, 'voice', activeWindow),
@@ -326,7 +337,17 @@ function start(): void {
 
   voice.start();
 
-  app.on('will-quit', () => {
+  let restoredSound = false;
+  app.on('will-quit', (event) => {
+    // Put lowered apps back before the helper that does it shuts down (at most 1.5 s).
+    if (!restoredSound && ducker.pending) {
+      event.preventDefault();
+      restoredSound = true;
+      void Promise.race([ducker.set(false), new Promise((r) => setTimeout(r, 1500))]).finally(() =>
+        app.quit(),
+      );
+      return;
+    }
     updater.dispose();
     globalShortcut.unregisterAll();
     confirmBroker.cancelAll();

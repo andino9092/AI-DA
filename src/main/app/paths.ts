@@ -11,6 +11,7 @@ export const paths = {
   vaultFile: () => join(app.getPath('userData'), 'vault.json'),
   sensitiveValuesFile: () => join(app.getPath('userData'), 'sensitive-values.json'),
   quotaFile: () => join(app.getPath('userData'), 'quota.json'),
+  duckedFile: () => join(app.getPath('userData'), 'ducked.json'),
   logsDir: () => join(app.getPath('userData'), 'logs'),
   defaultModelsDir: () => join(app.getPath('userData'), 'models'),
 };

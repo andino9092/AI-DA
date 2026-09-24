@@ -38,6 +38,22 @@ describe('parseInstant', () => {
     ['press control shift t', [{ name: 'press_keys', args: { keys: 'ctrl+shift+t' } }]],
     ['press ctrl+w', [{ name: 'press_keys', args: { keys: 'ctrl+w' } }]],
     ['scroll down', [{ name: 'scroll', args: { direction: 'down', amount: 5 } }]],
+    // Media words are never app names; filler words never open anything.
+    ['start the video', [{ name: 'media_control', args: { action: 'play' } }]],
+    [
+      'can you start the video on my browser',
+      [{ name: 'media_control', args: { action: 'play', app: 'browser' } }],
+    ],
+    [
+      'play the youtube video on zen',
+      [{ name: 'media_control', args: { action: 'play', app: 'zen' } }],
+    ],
+    [
+      'start the youtube video',
+      [{ name: 'media_control', args: { action: 'play', app: 'youtube' } }],
+    ],
+    ['can you open and...', null],
+    ['open the video', null],
     ['set spotify volume to 30', [{ name: 'set_app_volume', args: { app: 'spotify', level: 30 } }]],
     ["discord's volume 20", [{ name: 'set_app_volume', args: { app: 'discord', level: 20 } }]],
     ['mute chrome', [{ name: 'set_app_volume', args: { app: 'chrome', muted: true } }]],

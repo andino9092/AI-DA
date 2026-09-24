@@ -110,7 +110,7 @@ export class FakeWindows implements WindowsBridge {
   async mediaControl(action: MediaCommand, app?: string) {
     this.mediaCommands.push({ action, app });
     const session = app
-      ? this.sessions.find((s) => s.appId.toLowerCase().includes(app))
+      ? this.sessions.find((s) => s.appId.toLowerCase().includes(app.toLowerCase()))
       : this.sessions[0];
     if (!session) throw new NoMediaSessionError(app ?? null);
     if (action === 'pause') session.status = 'paused';
@@ -152,6 +152,10 @@ export class FakeWindows implements WindowsBridge {
   }
   async uiFocus(id: number) {
     this.focusedElements.push(id);
+  }
+  focused = { role: 'document', name: 'Page', password: false };
+  async focusedElement() {
+    return { ...this.focused };
   }
   async uiScroll(handle: number, direction: 'up' | 'down', amount: number) {
     this.scrolled.push({ handle, direction, amount });

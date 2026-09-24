@@ -98,6 +98,7 @@ namespace Aida
 
                 case "ui.snapshot": return Ui.Snapshot(a.Long("handle"), a.OptInt("max", 250));
                 case "ui.click": return Ui.Click(a.Int("id"));
+                case "ui.focused": return Ui.Focused();
                 case "ui.focus": return Ui.Focus(a.Int("id"));
                 case "ui.scroll": return Ui.Scroll(a.Long("handle"), a.Str("direction"), a.OptInt("amount", 5));
 

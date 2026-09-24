@@ -2,7 +2,7 @@
 
 **AI-DA (AI Desktop Assistant)** is a voice-first assistant for Windows that runs from the system tray. It hears you, understands what you mean and acts on your PC: it opens apps, clicks through UI, changes volume and more. It can also be controlled from your phone through Tailscale when you're away from your desk.
 
-Status: **Phase 3 built (real computer control), waiting on live checks; then Phase 4 (Tailscale remote)** (last updated 2026-09-23).
+Status: **Phase 3 built (real computer control), waiting on live checks. Phase 4 (Tailscale remote) skipped for now (decided 2026-09-23)** (last updated 2026-09-23).
 
 ## Decisions made
 
@@ -296,9 +296,17 @@ Each phase ends with something you can run and use.
   - **Hold-to-talk:** push-to-talk goes through the sidecar's keyboard hook (the key is swallowed so apps don't see it); hold to talk through pauses, or tap then speak as before.
   - **Replies:** short replies are cached as audio after the first time, and common ones ("Okay.", "Paused.") are prepared at startup.
   - **Installer:** `npm run dist` → `AI-DA Setup <version>.exe` (149 MB; 500 MB installed, mostly Electron). Native modules are unpacked from asar; unused onnxruntime-web and non-x64 binaries are left out. Auto-update checks GitHub Releases every 6 hours (installed builds, can be turned off) and installs on quit or from the tray.
-  - *Not verified live yet:* clicking in Discord and the password-manager check against real apps, hold-to-talk with a real key press, spoken confirmations, the installed build. The helper's read-only commands were tested against the real desktop (UI Automation listed Spotify's controls in 364 ms; OCR took 116 ms).
+  - *Live test by Andy (2026-09-23):* panic key ✅, Bitwarden refused ✅, media play/pause/skip/"what's playing" ✅, output switching ✅. Problems found and fixed the same day:
+    - **Clicks missed buttons:** Chromium/Electron apps (Claude, Discord) build their accessibility tree only when asked, so the first look saw just the title bar; Firefox-based Zen marks every control "offscreen" when its window isn't in front, so it showed nothing. The helper now wakes the tree (`AccessibleObjectFromWindow` on the page window), waits up to 2.5 s for it to fill, judges visibility by position, filters by control type inside the search (YouTube page: 4.7 s → 2.9 s), and click/type search all controls instead of the first 250.
+    - **"Play the video on Zen" failed:** Zen's media session reports only an id (`F0DC299D809B9700`); sessions are now named through the Start-menu list, "browser"/"YouTube"/"Zen browser" resolve to it, and a video that was never started is played by focusing the page (F6 out of the address bar) and pressing YouTube's `k`. YouTube hides its player buttons from accessibility tools, so clicking isn't possible there.
+    - **Hold-to-talk sometimes stayed on "Listening…":** holding now records everything until release (the speech detector only trims silence), releasing Ctrl or Alt also ends the hold, a 25 s cap stops a stuck hold, and silence gives "I didn't hear anything." instead of waiting 7 s.
+    - **Videos and music were heard as commands** (follow-up listening picked up YouTube speech): other apps are now turned down while Aida listens or talks (Settings → Voice, on by default), restored afterwards, and restored on the next start if AI-DA quit mid-way.
+    - **"Start the video" opened Movie Maker; "open and…" opened Fax and Scan:** media words and filler words are no longer app names.
+    - **Tab titles sent your email address to Gemini:** text read off the screen now always has emails and phone numbers masked.
+    - **The action log stopped being written** while another program held the file open; it now falls back to a second file instead of dropping lines.
+  - *Still to verify live:* Discord Send, hold-to-talk after the fix, spoken confirmations, the installed build.
 
-**Phase 4: Tailscale remote → v2.1 release**
+**Phase 4: Tailscale remote → v2.1 release** *(skipped for now, decided 2026-09-23)*
 - Add Tailscale detection, the tailnet-only gateway, QR pairing and the phone PWA.
 - ✅ *Done when:* you can pause music and lock the PC from your phone on cellular data.
 
@@ -322,7 +330,9 @@ Found while building. Each should be fixed in the phase noted.
 | ~~The installer must unpack native modules from the asar archive~~ | Native `.node` files can't load from inside asar | ✅ Fixed in Phase 3 (`asarUnpack` for onnxruntime-node and sharp) |
 | Auto-update only works once releases are published | electron-updater reads `latest.yml` from GitHub Releases | Publish with `npx electron-builder --win --publish always` (needs `GH_TOKEN`); the repo's releases must be public |
 | The installer isn't code-signed | No signing certificate | Windows SmartScreen shows "unknown publisher" on first install. A certificate (or Azure Trusted Signing) fixes it (Later) |
-| Media sessions name browsers by an id, so replies say "your browser" | Chromium reports a hashed app id | Map ids to browser names through the Start-menu index (Later) |
+| ~~Media sessions name browsers by an id, so replies say "your browser"~~ | Browsers report a hashed app id | ✅ Fixed: ids are matched to Start-menu entries ("Zen") |
+| Reading a big web page takes ~3 s (YouTube: ~1,000 controls) | UI Automation walks the page across processes | Search near the focused area first, or cache per page (Later) |
+| Playing a never-started video only works on sites with a known key (YouTube `k`; space on Twitch/Netflix/etc.) | Browsers only report media sessions after playback starts, and YouTube hides its player buttons from accessibility tools | Good enough for now |
 | ~~Per-app volume and output-device switching (MVP item 7) weren't built~~ | Phase 3 focused on UI control first | ✅ Fixed in Phase 3: `set_app_volume` ("mute Discord", "Spotify volume 30"), `set_output_device` ("switch to my headphones"), `list_audio` |
 
 ## Risks and how they're handled

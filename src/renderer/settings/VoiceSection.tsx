@@ -152,6 +152,12 @@ export function VoiceSection({
         checked={voice.showOverlay}
         onChange={(v) => setVoice({ showOverlay: v })}
       />
+      <Toggle
+        label="Lower other sounds while Aida listens"
+        hint="Turns music and videos down while you give a command and while she answers, so she hears you (and you hear her). Put back right after."
+        checked={voice.duckOthers}
+        onChange={(v) => setVoice({ duckOthers: v })}
+      />
 
       <div className="flex items-center gap-3">
         <span className="w-24 shrink-0 text-sm">Microphone</span>

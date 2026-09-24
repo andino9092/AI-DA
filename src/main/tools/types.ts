@@ -24,6 +24,11 @@ export interface ToolResult {
   followUp?: boolean;
   /** The user declined the confirmation. */
   cancelled?: boolean;
+  /**
+   * data holds text read off the screen (controls, window titles, OCR): emails and phone numbers
+   * in it are always masked before it leaves the PC, whatever the contact-info setting says.
+   */
+  fromScreen?: boolean;
 }
 
 export interface Tool<S extends z.ZodType = z.ZodType> {

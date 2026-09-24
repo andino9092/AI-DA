@@ -19,6 +19,7 @@ export interface VoiceServiceDeps {
   handleCommand: (text: string, activeWindow: number | null) => Promise<string>;
   foregroundWindow: () => Promise<number | null>;
   setState: (state: AssistantState | null) => void;
+  duck: (on: boolean) => void;
 }
 
 const WAKE_PROMPT = 'Hey Aida,';
@@ -62,6 +63,7 @@ export class VoiceService {
       onHeard: (heard) => this.sendMonitor({ type: 'heard', heard }),
       canListen: () => this.canListen(),
       canSpeak: () => models.isReady('kokoro'),
+      duck: deps.duck,
     });
     this.audio = new AudioWindow({
       onEvent: (event) => {

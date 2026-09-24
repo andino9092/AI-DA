@@ -12,6 +12,7 @@ function setup(options: {
   canListen?: boolean;
   wakeWord?: boolean;
   monitoring?: boolean;
+  duck?: (on: boolean) => void;
 }) {
   const transcripts = [...options.transcripts];
   const commands: string[] = [];
@@ -51,6 +52,7 @@ function setup(options: {
     onHeard: (h) => heard.push(h),
     canListen: () => options.canListen ?? true,
     canSpeak: () => true,
+    duck: options.duck,
   });
 
   const say = async (mode: 'wake' | 'command' = 'wake') => {
@@ -192,9 +194,39 @@ describe('VoiceController', () => {
     expect(holding).toMatchObject({ mode: 'command', hold: true });
     spy.mockReturnValue(now + 2000);
     t.controller.pushToTalkUp();
-    expect(t.audio.filter((c) => c.type === 'config').at(-1)).toMatchObject({ hold: false });
-    expect(t.audio.at(-1)).toEqual({ type: 'flush' });
+    // The recording is sent first, then hold is switched off (otherwise it would be dropped).
+    expect(t.audio.slice(-2)).toMatchObject([{ type: 'flush' }, { type: 'config', hold: false }]);
     spy.mockRestore();
+  });
+
+  it('"I didn\'t hear anything" when push-to-talk was held in silence', () => {
+    const t = setup({ transcripts: [] });
+    t.controller.pushToTalkDown();
+    t.controller.onAudioEvent({ type: 'no-speech' });
+    expect(t.overlay.at(-1)).toMatchObject({ phase: 'error', text: "I didn't hear anything." });
+    expect(t.modes().at(-1)).toBe('wake');
+  });
+
+  it('stops listening on its own if the key-up never arrives', () => {
+    vi.useFakeTimers();
+    try {
+      const t = setup({ transcripts: [] });
+      t.controller.pushToTalkDown();
+      vi.advanceTimersByTime(26_000);
+      expect(t.audio.some((c) => c.type === 'flush')).toBe(true);
+      expect(t.audio.filter((c) => c.type === 'config').at(-1)).toMatchObject({ hold: false });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('asks to lower other sounds while listening and restores them after', async () => {
+    const ducks: boolean[] = [];
+    const t = setup({ transcripts: ['open spotify'], speak: false, duck: (on) => ducks.push(on) });
+    t.controller.pushToTalk();
+    expect(ducks).toEqual([true]);
+    await t.say('command');
+    expect(ducks.at(-1)).toBe(false);
   });
 
   it('a quick tap of push-to-talk still means "speak, then pause"', () => {

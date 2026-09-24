@@ -63,6 +63,22 @@ export class AppIndex {
     return ranked.slice(0, limit);
   }
 
+  /**
+   * The Start-menu name for a Windows app id, as reported by media sessions: exact ids ("Zen"'s
+   * F0DC299D809B9700), variants ("…;PrivateBrowsingAUMID"), and bare exe names ("Spotify.exe"
+   * for a shortcut to C:\…\Spotify.exe). Uses what's loaded; null if unknown.
+   */
+  nameForAppId(appId: string): string | null {
+    const id = appId.toLowerCase();
+    const base = id.split(';')[0]!;
+    for (const app of this.apps) {
+      const candidate = app.appId.toLowerCase();
+      if (candidate === id || candidate === base) return app.name;
+      if (base.endsWith('.exe') && candidate.endsWith(`\\${base}`)) return app.name;
+    }
+    return null;
+  }
+
   async best(query: string): Promise<StartApp | null> {
     const [top] = await this.search(query, 1);
     return top && top.score >= APP_MATCH_THRESHOLD ? top.item : null;

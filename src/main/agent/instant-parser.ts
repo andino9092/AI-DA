@@ -23,7 +23,10 @@ const THIS_WINDOW =
 
 /** "open a new tab", "open my resume" etc. need real understanding, not a Start-menu lookup. */
 const NOT_AN_APP =
-  /\b(?:tab|file|folder|document|page|email|mail from|message|link|website for|new)\b/;
+  /\b(?:tab|file|folder|document|page|email|mail from|message|link|website for|new|video|song|music|movie|playlist|podcast|episode|stream)\b/;
+
+/** Filler that speech recognition leaves behind ("can you open and..."): never an app name. */
+const FILLER = /^(?:and|or|so|to|up|it|this|that|then|um|uh|something|anything|please|the|a|an)$/;
 
 const DOMAIN =
   /^[a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?:com|org|net|io|dev|app|ai|co|edu|gov|tv|me|gg|us|uk|ca)(?:\/\S*)?$/;
@@ -221,10 +224,20 @@ function parseClause(clause: string): PlannedCall | null {
     const t = target(m[1]!);
     return t && !NOT_AN_APP.test(t) ? { name: 'close_app', args: { name: t } } : null;
   }
+  // "start the video", "play the youtube video on zen": media, not an app called "video".
+  if (
+    (m = clause.match(
+      /^(?:start|play|resume|unpause|continue) (?:the |my |this )?(youtube )?(?:video|movie|episode|stream|show|clip)(?: (?:on|in) (?:the |my )?(.+?))?$/,
+    ))
+  ) {
+    const app = m[2] ?? (m[1] ? 'youtube' : undefined);
+    return { name: 'media_control', args: { action: 'play', ...(app ? { app } : {}) } };
+  }
+
   if ((m = clause.match(/^(?:open|launch|start|run|go to) (?:up )?(.+)$/))) {
     const what = m[1]!.replace(/^the /, '').trim();
     if (DOMAIN.test(what) && normalizeUrl(what)) return { name: 'open_url', args: { url: what } };
-    if (/^(?:a|an|my|some) /.test(what) || NOT_AN_APP.test(what)) return null;
+    if (/^(?:a|an|my|some) /.test(what) || NOT_AN_APP.test(what) || FILLER.test(what)) return null;
     // "open spotify and play my liked songs": the rest is a request, not part of the name.
     if (
       /\b(?:and|then)\s+(?:play|set|turn|open|close|search|find|go|type|send|make|put|show|start)\b/.test(

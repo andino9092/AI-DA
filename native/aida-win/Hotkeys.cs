@@ -116,9 +116,22 @@ namespace Aida
                     bool down = message == 0x100 || message == 0x104;
                     bool up = message == 0x101 || message == 0x105;
                     List<Binding> current = bindings;
+                    int vk = (int)k.vkCode;
+                    // Letting go of Ctrl/Alt/Shift/Win also ends a held shortcut, so a missed key-up
+                    // for the main key can't leave push-to-talk stuck on. The modifier's own key-up
+                    // still reaches the app.
+                    if (up)
+                    {
+                        foreach (Binding b in current)
+                        {
+                            if (!b.Down || !RequiresModifier(b, vk)) continue;
+                            b.Down = false;
+                            Notify(b.Name, false);
+                        }
+                    }
                     foreach (Binding b in current)
                     {
-                        if (b.Vk != (int)k.vkCode) continue;
+                        if (b.Vk != vk) continue;
                         if (down)
                         {
                             if (b.Down) return new IntPtr(1); // auto-repeat while held
@@ -138,6 +151,18 @@ namespace Aida
                 }
             }
             return CallNextHookEx(IntPtr.Zero, nCode, wParam, lParam);
+        }
+
+        private static bool RequiresModifier(Binding b, int vk)
+        {
+            switch (vk)
+            {
+                case 0x10: case 0xA0: case 0xA1: return b.Shift;
+                case 0x11: case 0xA2: case 0xA3: return b.Ctrl;
+                case 0x12: case 0xA4: case 0xA5: return b.Alt;
+                case 0x5B: case 0x5C: return b.Win;
+                default: return false;
+            }
         }
 
         private static void Notify(string name, bool down)

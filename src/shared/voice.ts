@@ -39,6 +39,8 @@ export type AudioEvent =
   | { type: 'mic-state'; open: boolean; error?: string }
   | { type: 'speech-start'; mode: ListenMode }
   | { type: 'command-timeout' }
+  /** Push-to-talk was released without any speech in the recording. */
+  | { type: 'no-speech' }
   | { type: 'level'; rms: number }
   | { type: 'playback-finished'; id: string }
   | { type: 'error'; message: string };

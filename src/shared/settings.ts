@@ -45,6 +45,8 @@ export const settingsSchema = z.object({
     speed: z.number().min(0.7).max(1.4),
     /** Show the small status pill while listening, thinking and speaking. */
     showOverlay: z.boolean(),
+    /** Turn other apps down while Aida listens for a command or talks. */
+    duckOthers: z.boolean(),
     /** Microphone to use; null means the Windows default. */
     inputDeviceId: z.string().min(1).nullable(),
   }),
@@ -85,6 +87,7 @@ export const DEFAULT_SETTINGS: Settings = {
     voice: 'af_heart',
     speed: 1,
     showOverlay: true,
+    duckOthers: true,
     inputDeviceId: null,
   },
   shortcuts: {

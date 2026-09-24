@@ -36,7 +36,7 @@ function setup(options: {
   }));
   const registry = new ToolRegistry().register(
     ...audioTools(win),
-    ...mediaTools(win),
+    ...mediaTools({ win }),
     ...appTools(win, new AppIndex(win), {
       launchApp: (id) => launched.push(id),
       openUrl: async (url) => void opened.push(url),

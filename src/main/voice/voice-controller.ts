@@ -38,6 +38,8 @@ export interface VoiceDeps {
   /** Ready to listen (VAD + speech recognition installed) / ready to talk (voice installed). */
   canListen: () => boolean;
   canSpeak: () => boolean;
+  /** Lower other apps' sound while Aida listens or talks (true), and restore it (false). */
+  duck?: (on: boolean) => void;
 }
 
 /** "Hey Aida, stop" and friends interrupt instead of being sent to the assistant. */
@@ -47,6 +49,8 @@ const STOP_WORDS =
 const REPLY_VISIBLE_MS = 4000;
 /** Holding push-to-talk at least this long means "listen until I let go". */
 const HOLD_MS = 350;
+/** Longest hold before listening stops on its own (the recording itself is capped at ~19 s). */
+const MAX_HOLD_MS = 25_000;
 
 const YES =
   /^(?:yes|yeah|yep|yup|sure|ok(?:ay)?|do it|go ahead|confirm(?:ed)?|please do|affirmative|correct|send it)\b/i;
@@ -72,10 +76,13 @@ export class VoiceController {
   private queue: Promise<void> = Promise.resolve();
   /** Push-to-talk key is down (hold-to-talk). */
   private holding: { since: number } | null = null;
+  private holdTimer: ReturnType<typeof setTimeout> | null = null;
   /** Waiting for a spoken yes/no. */
   private confirming: { question: string; resolve: (approved: boolean) => void } | null = null;
   /** Runs when the current speech finishes playing, instead of the usual follow-up. */
   private afterSpeech: (() => void) | null = null;
+  /** A command is being transcribed: the level meter mustn't flip the pill back to Listening. */
+  private transcribing = false;
   /** Bumped by panic so a command that was running doesn't speak its reply afterwards. */
   private generation = 0;
 
@@ -109,18 +116,31 @@ export class VoiceController {
 
   /** Hold-to-talk: key down starts listening; key up ends the command if it was held. */
   pushToTalkDown(): void {
+    this.clearHoldTimer();
     this.holding = { since: Date.now() };
     this.pushToTalk();
-    if (this.phase !== 'command') this.holding = null;
-    else this.refresh();
+    if (this.phase !== 'command') {
+      this.holding = null;
+      return;
+    }
+    // If the key-up never arrives (focus change, stuck key), stop listening anyway.
+    this.holdTimer = setTimeout(() => this.pushToTalkUp(), MAX_HOLD_MS);
   }
 
   pushToTalkUp(): void {
+    this.clearHoldTimer();
     const held = this.holding;
     this.holding = null;
-    if (!held || this.phase !== 'command') return;
+    if (!held) return;
+    // Send what was recorded before turning hold off, so the recording isn't dropped.
+    if (this.phase === 'command' && Date.now() - held.since >= HOLD_MS)
+      this.deps.audio({ type: 'flush' });
     this.refresh();
-    if (Date.now() - held.since >= HOLD_MS) this.deps.audio({ type: 'flush' });
+  }
+
+  private clearHoldTimer(): void {
+    if (this.holdTimer) clearTimeout(this.holdTimer);
+    this.holdTimer = null;
   }
 
   /**
@@ -142,6 +162,7 @@ export class VoiceController {
       const listen = () => {
         if (!this.confirming) return;
         this.phase = 'command';
+        this.deps.duck?.(true);
         this.deps.audio({ type: 'chime', chime: 'listen' });
         this.deps.setState('listening');
         this.deps.overlay({ phase: 'confirm', text: `${question} Say yes or no.` });
@@ -157,6 +178,7 @@ export class VoiceController {
 
   /** Panic: stop talking, decline anything waiting for an answer, go back to idle. */
   panic(): void {
+    this.clearHoldTimer();
     this.generation++;
     this.holding = null;
     this.afterSpeech = null;
@@ -185,11 +207,19 @@ export class VoiceController {
         if (event.mode === 'command') this.deps.overlay({ phase: 'listening' });
         break;
       case 'level':
-        if (this.phase === 'command') this.deps.overlay({ phase: 'listening', level: event.rms });
+        if (this.phase === 'command' && !this.transcribing)
+          this.deps.overlay({ phase: 'listening', level: event.rms });
         break;
       case 'command-timeout':
         if (this.confirming) this.answer(false);
         else if (this.phase === 'command') this.toIdle();
+        break;
+      case 'no-speech':
+        if (this.confirming) this.answer(false);
+        else if (this.phase === 'command') {
+          this.deps.overlay({ phase: 'error', text: "I didn't hear anything." }, 2000);
+          this.toIdle(true);
+        }
         break;
       case 'playback-finished':
         if (this.speech?.id === event.id) {
@@ -234,11 +264,14 @@ export class VoiceController {
     if (expectingCommand) this.deps.overlay({ phase: 'transcribing' });
 
     let text: string;
+    this.transcribing = expectingCommand;
     try {
       text = await this.deps.stt.transcribe(samples);
     } catch (err) {
       if (expectingCommand) this.fail(err instanceof Error ? err.message : String(err));
       return;
+    } finally {
+      this.transcribing = false;
     }
 
     const wake = expectingCommand ? null : matchWakePhrase(text, { fuzzy: this.fuzzy() });
@@ -284,7 +317,9 @@ export class VoiceController {
 
   private async handleAnswer({ samples }: Utterance): Promise<void> {
     this.deps.overlay({ phase: 'transcribing' });
+    this.transcribing = true;
     const text = await this.deps.stt.transcribe(samples).catch(() => '');
+    this.transcribing = false;
     this.answer(parseYesNo(text) === true);
   }
 
@@ -303,6 +338,7 @@ export class VoiceController {
     const id = randomUUID();
     const abort = new AbortController();
     this.speech = { id, abort };
+    this.deps.duck?.(true);
     this.deps.setState('speaking');
     await this.deps.speak(
       text,
@@ -357,6 +393,7 @@ export class VoiceController {
 
   private armCommand(): void {
     this.phase = 'command';
+    this.deps.duck?.(true);
     this.deps.audio({ type: 'chime', chime: 'listen' });
     this.deps.setState('listening');
     this.deps.overlay({ phase: 'listening' });
@@ -366,6 +403,7 @@ export class VoiceController {
   /** keepOverlay: a reply or error was just shown and hides itself after a moment. */
   private toIdle(keepOverlay = false): void {
     this.phase = 'idle';
+    this.deps.duck?.(false);
     this.deps.setState(null);
     this.refresh();
     if (!keepOverlay && !this.speech) this.deps.overlay({ phase: 'hidden' });
