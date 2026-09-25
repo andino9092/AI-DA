@@ -8,7 +8,7 @@ Status: **v2.0 feature-complete: Phases 0–3 plus the remaining MVP items (time
 
 | Topic | Decision |
 |---|---|
-| Platform | **Windows only** for v2. Platform-specific code stays behind interfaces so macOS can be added later. |
+| Platform | **Windows only** for v2. Platform-specific code stays behind interfaces so macOS can be added later. Mac plan: [PLAN-MAC.md](PLAN-MAC.md). |
 | Brain | **Cloud LLM on a free tier** (Gemini Flash-Lite, with Groq as backup). This is the only part of the default setup that uses the internet. |
 | Ears and voice | **Local.** The wake word, VAD, speech-to-text (Whisper on your RTX 3070 Ti) and text-to-speech (Kokoro) all run on your PC. They're faster, private and have no quota. |
 | Cost target | **$0/month** for normal personal use, with no required paid API keys. |
@@ -199,7 +199,7 @@ Kept deliberately small: *hear → understand → act → answer*, done fast and
 7. Fully offline brain (Ollama LLM)
 8. Clipboard and selection tools, notification digest, proactive alerts
 9. MCP servers in Settings
-10. Speaker verification, multi-language support, macOS port
+10. Speaker verification, multi-language support, macOS port (see [PLAN-MAC.md](PLAN-MAC.md): a Mac companion that works with Siri)
 
 ---
 
