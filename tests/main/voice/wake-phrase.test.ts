@@ -50,6 +50,30 @@ describe('matchWakePhrase', () => {
   });
 });
 
+describe('matchWakePhrase: over music', () => {
+  const anywhere = { fuzzy: true, anywhere: true };
+
+  it.each([
+    ["I'm on the highway to hell. Hey Aida, pause the music.", 'pause the music.'],
+    ['la la la hey Aida', ''],
+    ['baby baby, okay Aida, skip this song', 'skip this song'],
+  ])('finds the wake phrase after lyrics: "%s"', (text, command) => {
+    expect(matchWakePhrase(text, anywhere)).toEqual({ command });
+    // Not by default: only at the start.
+    expect(matchWakePhrase(text)).toBeNull();
+  });
+
+  it.each([
+    // No greeting: a name in the middle of a sentence is just a name.
+    'I was talking to Ada about it yesterday',
+    // A close misspelling only counts at the start.
+    'and then hey Aita came over',
+    'hey there, how are you',
+  ])('still ignores "%s"', (text) => {
+    expect(matchWakePhrase(text, anywhere)).toBeNull();
+  });
+});
+
 describe('cleanTranscript', () => {
   it('removes non-speech markers and silence hallucinations', () => {
     expect(cleanTranscript(' [BLANK_AUDIO] ')).toBe('');

@@ -10,6 +10,10 @@ export default defineConfig({
     resolve: { alias },
     build: {
       rollupOptions: {
+        // Native module (voice recognition): it loads its binary from its own folder, so it
+        // must stay in node_modules. It comes in through @huggingface/transformers, so it isn't
+        // external by default.
+        external: ['onnxruntime-node'],
         input: {
           index: resolve(__dirname, 'src/main/index.ts'),
           // Runs in its own utility process so speech synthesis never blocks the app.

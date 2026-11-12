@@ -19,8 +19,12 @@ namespace Aida
         private static TextWriter output;
 
         [MTAThread]
-        public static int Main()
+        public static int Main(string[] args)
         {
+            // Separate modes for echo-cancelled audio (see Aec.cs); the default is the JSON helper.
+            if (args.Length > 0 && args[0] == "aec-capture") return Aec.Capture(args);
+            if (args.Length == 4 && args[0] == "aec-selftest") return Aec.SelfTest(args[1], args[2], args[3]);
+
             Console.InputEncoding = new UTF8Encoding(false);
             output = new StreamWriter(Console.OpenStandardOutput(), new UTF8Encoding(false));
             Win.Init();
@@ -110,6 +114,8 @@ namespace Aida
                 case "ocr.window": return Ocr.Window(a.Long("handle"));
 
                 case "hotkeys.set": Hotkeys.Set(a.List("bindings")); return true;
+
+                case "presence": return Presence.Get();
 
                 default: throw new ArgumentException("Unknown command: " + cmd);
             }

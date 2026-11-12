@@ -47,11 +47,12 @@ describe('ModelManager', () => {
 
   it('reports every model as missing in an empty folder', () => {
     const manager = new ModelManager(() => dir, fakeFetch(Buffer.alloc(0)));
-    expect(manager.status().map((m) => m.state)).toEqual([
-      'missing',
-      'missing',
-      'missing',
-      'missing',
+    expect(manager.status().map((m) => [m.id, m.state])).toEqual([
+      ['vad', 'missing'],
+      ['whisper-runtime', 'missing'],
+      ['whisper-model', 'missing'],
+      ['kokoro', 'missing'],
+      ['speaker', 'missing'],
     ]);
   });
 

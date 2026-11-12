@@ -75,6 +75,11 @@ export class Player {
         [880, 0.9],
         [1175, 1.02],
       ],
+      // Notifications (email, calendar): one soft rising pair.
+      notify: [
+        [784, 0],
+        [1047, 0.12],
+      ],
     };
     const t0 = this.ctx.currentTime + 0.01;
     for (const [freq, offset] of notes[kind]) {

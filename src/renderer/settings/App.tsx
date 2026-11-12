@@ -11,6 +11,7 @@ import { ShortcutInput } from './ShortcutInput';
 import { Setup } from './Setup';
 import { WeatherSection } from './WeatherSection';
 import { SpotifySection } from './SpotifySection';
+import { NotificationsSection } from './NotificationsSection';
 import { MemorySection } from './MemorySection';
 import { RoutinesSection } from './RoutinesSection';
 
@@ -98,11 +99,13 @@ export function App() {
 
       <SpotifySection settings={settings} update={update} />
 
+      <NotificationsSection settings={settings} update={update} />
+
       <RoutinesSection settings={settings} update={update} />
 
       <MemorySection />
 
-      <UsageSection settings={settings} />
+      <UsageSection />
 
       <PrivacySection settings={settings} update={update} />
 

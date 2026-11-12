@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { splitForSpeech } from '../../../src/main/voice/sentences';
+import { splitForSpeech } from '../../../src/shared/sentences';
 import { encodeWav, normalizePeak, peakDbfs } from '../../../src/main/voice/wav';
 
 describe('splitForSpeech', () => {
@@ -15,6 +15,27 @@ describe('splitForSpeech', () => {
     expect(splitForSpeech('Version 2.0 is out. e.g. this stays')).toEqual([
       'Version 2.0 is out. e.g. this stays',
     ]);
+  });
+
+  it('starts a long first sentence with its first clause', () => {
+    expect(
+      splitForSpeech(
+        "It's 18 degrees, feels like 15 and partly cloudy in Toronto. Today's high is 21.",
+      ),
+    ).toEqual([
+      "It's 18 degrees,",
+      'feels like 15 and partly cloudy in Toronto.',
+      "Today's high is 21.",
+    ]);
+    // Short first sentences, and ones without an early pause, stay whole.
+    expect(splitForSpeech('Okay, pausing the music.')).toEqual(['Okay, pausing the music.']);
+    expect(
+      splitForSpeech('Tomorrow in Toronto will be rainy with a high of sixteen degrees overall.'),
+    ).toEqual(['Tomorrow in Toronto will be rainy with a high of sixteen degrees overall.']);
+    // A pause right at the start ("Okay,") is too short to be worth its own chunk.
+    expect(
+      splitForSpeech('Okay, I set a timer for ten minutes and a reminder, both on your PC.'),
+    ).toEqual(['Okay, I set a timer for ten minutes and a reminder,', 'both on your PC.']);
   });
 
   it('breaks very long sentences at commas', () => {

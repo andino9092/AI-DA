@@ -1,5 +1,4 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { createServer, type Server } from 'node:http';
 import { z } from 'zod';
 import {
   SPOTIFY_CALLBACK_PORT,
@@ -7,6 +6,7 @@ import {
   type SpotifyConnectResult,
   type SpotifyStatus,
 } from '@shared/spotify';
+import { base64url, waitForRedirect, type PendingRedirect } from '../util/oauth-redirect';
 
 const AUTHORIZE_URL = 'https://accounts.spotify.com/authorize';
 const TOKEN_URL = 'https://accounts.spotify.com/api/token';
@@ -59,13 +59,6 @@ export interface SpotifyClientDeps {
   port?: number;
 }
 
-function base64url(buffer: Buffer): string {
-  return buffer.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-}
-
-const PAGE = (message: string) =>
-  `<!doctype html><meta charset="utf-8"><title>AI-DA</title><body style="font:16px system-ui;margin:3em;color:#222">${message}</body>`;
-
 /**
  * Spotify Web API with the Authorization Code + PKCE flow: no client secret, the user's own
  * developer app, and a one-time local callback on 127.0.0.1. The refresh token is kept encrypted
@@ -73,7 +66,7 @@ const PAGE = (message: string) =>
  */
 export class SpotifyClient implements SpotifyApi {
   private accessToken: { value: string; expiresAt: number } | null = null;
-  private pendingSignIn: { cancel(): void } | null = null;
+  private pendingSignIn: PendingRedirect | null = null;
   private readonly fetch: typeof fetch;
   private readonly now: () => number;
 
@@ -118,8 +111,12 @@ export class SpotifyClient implements SpotifyApi {
     const state = base64url(randomBytes(16));
 
     let code: string;
-    try {
-      code = await this.waitForCallback(state, async () => {
+    const signIn = waitForRedirect({
+      service: 'Spotify',
+      port: this.deps.port ?? SPOTIFY_CALLBACK_PORT,
+      state,
+      timeoutMs: SIGN_IN_TIMEOUT_MS,
+      open: async () => {
         const url = new URL(AUTHORIZE_URL);
         url.search = new URLSearchParams({
           client_id: clientId,
@@ -131,9 +128,15 @@ export class SpotifyClient implements SpotifyApi {
           scope: SCOPES,
         }).toString();
         await this.deps.openBrowser(url.toString());
-      });
+      },
+    });
+    this.pendingSignIn = signIn;
+    try {
+      code = await signIn.code;
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    } finally {
+      if (this.pendingSignIn === signIn) this.pendingSignIn = null;
     }
 
     try {
@@ -257,72 +260,6 @@ export class SpotifyClient implements SpotifyApi {
         json?.error,
       );
     return tokenSchema.parse(json);
-  }
-
-  /** Listens once on 127.0.0.1 for Spotify's redirect and returns the authorization code. */
-  private waitForCallback(state: string, open: () => Promise<void>): Promise<string> {
-    return new Promise<string>((resolve, reject) => {
-      let server: Server | null = null;
-      let timer: ReturnType<typeof setTimeout> | null = null;
-      const finish = (error: Error | null, code?: string) => {
-        if (timer) clearTimeout(timer);
-        server?.close();
-        server = null;
-        this.pendingSignIn = null;
-        if (error) reject(error);
-        else resolve(code!);
-      };
-      this.pendingSignIn = { cancel: () => finish(new Error('Sign-in was cancelled.')) };
-
-      server = createServer((req, res) => {
-        const url = new URL(req.url ?? '/', SPOTIFY_REDIRECT_URI);
-        if (url.pathname !== '/callback') {
-          res.writeHead(404).end();
-          return;
-        }
-        const error = url.searchParams.get('error');
-        const code = url.searchParams.get('code');
-        if (url.searchParams.get('state') !== state) {
-          res
-            .writeHead(400, { 'Content-Type': 'text/html' })
-            .end(PAGE('This sign-in link is out of date. Try again from AI-DA.'));
-          return;
-        }
-        if (error || !code) {
-          res
-            .writeHead(200, { 'Content-Type': 'text/html' })
-            .end(PAGE('Spotify was not connected. You can close this tab.'));
-          finish(
-            new Error(
-              error === 'access_denied'
-                ? 'You cancelled the Spotify sign-in.'
-                : `Spotify said: ${error ?? 'no code'}.`,
-            ),
-          );
-          return;
-        }
-        res
-          .writeHead(200, { 'Content-Type': 'text/html' })
-          .end(PAGE('Spotify is connected to AI-DA. You can close this tab.'));
-        finish(null, code);
-      });
-      server.on('error', (err: NodeJS.ErrnoException) =>
-        finish(
-          new Error(
-            err.code === 'EADDRINUSE'
-              ? `Port ${this.deps.port ?? SPOTIFY_CALLBACK_PORT} is in use by another program, so the sign-in can't finish.`
-              : err.message,
-          ),
-        ),
-      );
-      server.listen(this.deps.port ?? SPOTIFY_CALLBACK_PORT, '127.0.0.1', () => {
-        timer = setTimeout(
-          () => finish(new Error('The Spotify sign-in timed out.')),
-          SIGN_IN_TIMEOUT_MS,
-        );
-        open().catch((err: unknown) => finish(err instanceof Error ? err : new Error(String(err))));
-      });
-    });
   }
 }
 

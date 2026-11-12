@@ -198,8 +198,29 @@ Kept deliberately small: *hear → understand → act → answer*, done fast and
 6. Conversation mode (Gemini Live, audio only)
 7. Fully offline brain (Ollama LLM)
 8. Clipboard and selection tools, notification digest, proactive alerts
+   - 🚧 **Built, not yet live-tested (v1.2):** spoken notifications from Gmail and Google Calendar (Andy picked these two; Twitch and mirroring Windows notifications are possible later).
+     - Google sign-in: the user's own Google Cloud project with a "Desktop app" OAuth client (Client ID in settings, Client secret and refresh token in the DPAPI vault). PKCE with a one-time listener on a free 127.0.0.1 port (shared with Spotify in `util/oauth-redirect.ts`). The app must be published in Google Auth Platform, otherwise Google's "Testing" mode expires the sign-in after 7 days.
+     - Scopes: `gmail.metadata` (headers and labels only; Google won't give AI-DA the text of any email) and `calendar.readonly`. Settings warns if the user unticked either box.
+     - Gmail is checked every minute: unread mail in the Primary tab (or Important only, or the whole inbox). The first check only learns what's there. Subjects with sign-in codes, or anything the Privacy Guard would mask, are withheld ("Email from GitHub.").
+     - Calendar: every calendar shown in Google Calendar is checked every 10 minutes for the next 26 hours. Reminders go out 10 minutes before (configurable), including "starting now". All-day, declined, cancelled and out-of-office events are skipped. The same meeting on two calendars counts once.
+     - When to talk (`NotificationCenter`): only when Aida is idle, after a soft chime. With "Wait while I'm busy" on, it holds while a full-screen app or game is open, another app uses the microphone (a call; from Windows' privacy records, ignoring AI-DA itself) or there's been no keyboard or mouse input for 5 minutes. The helper's new `presence` command reports these. After holding, it waits 4 s, then sums up: "While you were busy: 3 new emails, from Sam, GitHub and Amazon." Reminders that are out of date by then are dropped but stay in the history.
+     - Voice: "what did I miss", "mute notifications for an hour", "check my email", "what's on my calendar tomorrow", "when's my next meeting". All of these have instant-parser rules, so they skip the AI and stay local.
+     - With spoken replies off, they're shown as Windows notifications instead.
 9. MCP servers in Settings
-10. Speaker verification, multi-language support, macOS port
+10. ✅ **Done (v1.2):** speaker verification ("Only respond to my voice"). Still later: multi-language support, macOS port.
+   - WeSpeaker ResNet34 (26.5 MB, CC BY 4.0) runs on the CPU through onnxruntime-node in ~40 ms. Its features are Kaldi fbank, computed in `fbank.ts`.
+   - Settings → Voice records 5 samples; the voiceprint is DPAPI-encrypted in `voiceprint.json`.
+   - "Hey Aida" only counts if the utterance's cosine similarity to that voiceprint reaches the threshold for the wake sensitivity (Low 0.55, Normal 0.45, High 0.38). It's checked alongside transcription.
+   - Background sound pulled the owner's score down (Andy saw 0.37–0.39). Two fixes:
+     - Only the loudest half of the frames is fingerprinted.
+     - "Add samples with sound playing" adds up to 10 samples recorded over the usual background to the voiceprint.
+   - Simulated with music plus a talking video:
+     - At 6 dB under the voice, the owner scores 0.62–0.85 and other voices 0.23 or below.
+     - With another person talking as loud as the owner, the owner falls to 0.28–0.50, still above other voices (0.16 or below) but often under the thresholds. There, use push-to-talk.
+   - Voiceprints from the first version are flagged in Settings to be recorded again.
+   - Push-to-talk and follow-ups aren't checked.
+   - The mic check shows the score.
+   - Measured with Kokoro voices standing in for people: an enrolled voice saying something new scores 0.77–0.91, a clearly different voice at most 0.42. Two near-identical synthetic voices reached 0.70.
 
 ---
 
@@ -344,20 +365,22 @@ Found while building. Each should be fixed in the phase noted.
 | ~~Commands wait ~2–3 s after startup~~ | The PowerShell helper compiled `AidaWin.cs` on launch | ✅ Fixed in Phase 3: the precompiled helper starts in ~0.1 s |
 | ~~If another app owns Ctrl+Alt+A, the command box only opens from the tray~~ | Global shortcuts are first come, first served | ✅ Fixed in Phase 2: both shortcuts are rebindable in Settings, which warns when one is taken |
 | ~~The LLM doesn't see commands that ran locally~~ | The instant path skipped the conversation history | ✅ Fixed in Phase 2: instant commands and replies are added (scrubbed) to the history |
-| Spoken replies start 1.1–1.5 s after you stop talking (target: under 1 s) | Kokoro runs at ~0.4× real time on the CPU; DirectML can't run its `ConvTranspose` layers, and the q8 model is slower than real time on Zen 3 CPUs (no VNNI) | Partly fixed in Phase 3: short replies are cached and common ones prepared at startup. Still to do: run Kokoro on WebGPU in the audio window for new sentences (Later) |
+| Spoken replies start 1.1–1.5 s after you stop talking (target: under 1 s) | Kokoro ran at ~0.35× real time on the CPU; DirectML can't run its `ConvTranspose` layers, and the q8 model is slower than real time on Zen 3 CPUs (no VNNI) | Mostly fixed (v1.2). Kokoro runs on the graphics card (WebGPU, in a worker in the audio window, files via `aida-model:`), with the CPU as fallback; measured on the 3070 Ti: 308–541 ms against 620–1,000 ms on the CPU for typical replies. A long first sentence plays its first clause first. Transcription starts during the pause (at 320 ms of silence) instead of after it. Short replies are cached, and common ones prepared at startup. Not re-measured end to end on a live mic yet. Still to do: the first new sentence length on the GPU can take ~0.5–1.2 s while its programs compile |
 | ~~Push-to-talk is "press, then speak", not "hold while speaking"~~ | Electron global shortcuts only report key presses | ✅ Fixed in Phase 3: the helper's keyboard hook reports key-up |
 | While "Hey Aida" listening is on, all nearby speech is transcribed on the GPU (locally, then discarded) | The wake word is a Whisper phrase check, not a dedicated detector | Optional trained openWakeWord model as a cheap first gate (Later) |
-| "Hey Aida" is hard to catch over loud music or video from speakers | Echo cancellation only removes AI-DA's own audio, not Spotify or games | Use a headset mic, or push-to-talk. Later: echo cancellation using the system's audio output as a reference (sidecar loopback capture) |
+| "Hey Aida" is hard to catch over loud music or video from speakers | Chromium's echo cancellation only removed AI-DA's own audio, not Spotify or games; continuous sound also kept utterances going for up to 15 s, with the wake phrase buried mid-transcript | Fixed for sound from this PC (v1.2): the mic now goes through Windows' Voice Capture DSP (`aida-win.exe aec-capture`), which subtracts everything the speakers play (the file self-test removes 35–42 dB of echo and keeps the voice). Continuous sound is checked in overlapping 6 s windows, and "Hey Aida" counts after other words (greeting + exact name). Falls back to the browser mic if the DSP can't start. Echo length raised to 512 ms for Bluetooth speakers (100–300 ms late). Voices from other devices or people (a TV, a video on another speaker) are now rejected by "Only respond to my voice" when enrolled. Not yet tested live |
 | Voice is English only | whisper-server is started with `-l en` | Language setting (Later: multi-language) |
 | ~~AI requests failed or hung for ~18 s when Gemini was overloaded (503/504) and the Groq key was rejected~~ | No per-call time limit, no retry, and a busy provider was skipped entirely | ✅ Fixed 2026-09-24: 10 s limit per call, one retry on 503, busy providers retried last, plain-language errors (raw ones in the action log), and a **Test** button per key in Settings |
-| Only one free provider may be usable at a time | Gemini's free tier gets overloaded at busy hours; a second provider only helps if its key works | Check both keys with Test; consider a second Gemini model as an extra fallback (Later) |
-| Groq's free tier fits only one or two AI requests a minute | Free Groq allows 8,000 tokens a minute (and 1,000 output tokens, counted from the reply cap, now 300). Each request sends all 39 tools (~14.5K characters, very roughly 3.6–4.2K tokens) | Send only the tools a command needs (Later); Gemini is tried first, so Groq only covers overloads |
+| ~~Only one free provider may be usable at a time~~ | Gemini's free tier gets overloaded at busy hours; a second provider only helps if its key works | ✅ Fixed (v1.2): a backup Gemini model (`gemini-3.1-flash-lite`, its own quota) is tried right after the main one when it's overloaded, before Groq. The key's Test checks both models |
+| ~~Groq's free tier fits only one or two AI requests a minute~~ | Free Groq allows 8,000 tokens a minute (and 1,000 output tokens, counted from the reply cap, now 300). Each request sent all 39 tools (~13.3K characters of definitions) | ✅ Fixed (v1.2): only the tool groups a request mentions are sent ("skip this song": 2.1K characters instead of 13.3K). A `more_tools` tool lets the model ask for a missing group, and requests matching no group still get everything |
 | ~~The installer must unpack native modules from the asar archive~~ | Native `.node` files can't load from inside asar | ✅ Fixed in Phase 3 (`asarUnpack` for onnxruntime-node and sharp) |
 | Auto-update only works once releases are published | electron-updater reads `latest.yml` from GitHub Releases | Publish with `npx electron-builder --win --publish always` (needs `GH_TOKEN`); the repo's releases must be public |
 | The installer isn't code-signed | No signing certificate | Windows SmartScreen shows "unknown publisher" on first install. A certificate (or Azure Trusted Signing) fixes it (Later) |
 | ~~Media sessions name browsers by an id, so replies say "your browser"~~ | Browsers report a hashed app id | ✅ Fixed: ids are matched to Start-menu entries ("Zen") |
 | Reading a big web page takes ~3 s (YouTube: ~1,000 controls) | UI Automation walks the page across processes | Search near the focused area first, or cache per page (Later) |
 | Playing a never-started video only works on sites with a known key (YouTube `k`; space on Twitch/Netflix/etc.) | Browsers only report media sessions after playback starts, and YouTube hides its player buttons from accessibility tools | Good enough for now |
+| New emails are noticed up to a minute late | Gmail is polled; push needs a public endpoint (Pub/Sub) | Fine for spoken notifications |
+| A crashed call app can look like it's still using the microphone, holding notifications | Windows' privacy records keep "in use" until the app stops properly | Settings shows which app is holding them; turn off "Wait while I'm busy" if it sticks |
 | ~~Per-app volume and output-device switching (MVP item 7) weren't built~~ | Phase 3 focused on UI control first | ✅ Fixed in Phase 3: `set_app_volume` ("mute Discord", "Spotify volume 30"), `set_output_device` ("switch to my headphones"), `list_audio` |
 
 ## Risks and how they're handled

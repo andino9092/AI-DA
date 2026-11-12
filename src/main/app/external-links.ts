@@ -4,6 +4,7 @@ const ALLOWED_HOSTS = new Set([
   'console.groq.com',
   'github.com',
   'developer.spotify.com',
+  'console.cloud.google.com',
 ]);
 
 export function isAllowedExternalUrl(raw: string): boolean {

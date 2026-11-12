@@ -27,16 +27,23 @@ export class ToolRegistry {
     return [...this.tools.values()];
   }
 
-  /** Tool definitions sent to the LLM. Blocked tools are never offered. */
-  specs(): ToolSpec[] {
+  /** Tool definitions sent to the LLM, optionally only some. Blocked tools are never offered. */
+  specs(include: (name: string) => boolean = () => true): ToolSpec[] {
     return this.list()
-      .filter((t) => t.risk !== 'blocked')
+      .filter((t) => t.risk !== 'blocked' && include(t.name))
       .map((t) => {
-        const { $schema: _ignored, ...parameters } = z.toJSONSchema(t.input) as Record<
-          string,
-          unknown
-        >;
-        return { name: t.name, description: t.description, parameters };
+        let spec = this.specCache.get(t.name);
+        if (!spec) {
+          const { $schema: _ignored, ...parameters } = z.toJSONSchema(t.input) as Record<
+            string,
+            unknown
+          >;
+          spec = { name: t.name, description: t.description, parameters };
+          this.specCache.set(t.name, spec);
+        }
+        return spec;
       });
   }
+
+  private readonly specCache = new Map<string, ToolSpec>();
 }

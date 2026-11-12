@@ -108,6 +108,20 @@ export interface HotkeyBinding {
   win: boolean;
 }
 
+/** Whether now is a good moment to talk (see native/aida-win/Presence.cs). */
+export interface Presence {
+  /**
+   * Windows' QUERY_USER_NOTIFICATION_STATE: 1 locked or screen saver, 2 full-screen app,
+   * 3 full-screen game, 4 presentation mode, 5 free, 6 quiet time after setup, 7 full-screen
+   * Store app. 0 if unknown.
+   */
+  notificationState: number;
+  /** Seconds since the last keyboard or mouse input. */
+  idleSeconds: number;
+  /** Apps using the microphone now: Store app ids, or exe paths with # for \ (desktop apps). */
+  micApps: string[];
+}
+
 /** No app has a media session (nothing has played since it opened), or the named one doesn't. */
 export class NoMediaSessionError extends Error {
   constructor(readonly app: string | null) {
@@ -153,6 +167,8 @@ export interface WindowsBridge {
   /** Watches these key combinations and reports presses and releases (for hold-to-talk). */
   setHotkeys(bindings: HotkeyBinding[]): Promise<void>;
   onHotkey(listener: (name: string, down: boolean) => void): () => void;
+  /** Full-screen app, microphone use and idle time, for choosing when to speak up. */
+  presence(): Promise<Presence>;
 }
 
 const responseSchema = z.object({
@@ -167,6 +183,11 @@ const hotkeyEventSchema = z.object({
   down: z.boolean(),
 });
 
+const presenceSchema = z.object({
+  notificationState: z.number(),
+  idleSeconds: z.number(),
+  micApps: z.array(z.string()),
+});
 const volumeSchema = z.object({ level: z.number(), muted: z.boolean() });
 const windowSchema = z.object({
   handle: z.number(),
@@ -375,6 +396,10 @@ export class SidecarWindowsBridge implements WindowsBridge {
   async setHotkeys(bindings: HotkeyBinding[]) {
     this.hotkeys = bindings;
     await this.call('hotkeys.set', { bindings });
+  }
+
+  async presence() {
+    return presenceSchema.parse(await this.call('presence'));
   }
 
   onHotkey(listener: (name: string, down: boolean) => void) {

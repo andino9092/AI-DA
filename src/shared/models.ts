@@ -1,5 +1,5 @@
 export interface ModelStatus {
-  id: 'vad' | 'whisper-runtime' | 'whisper-model' | 'kokoro';
+  id: 'vad' | 'whisper-runtime' | 'whisper-model' | 'kokoro' | 'speaker';
   label: string;
   purpose: string;
   /** Download size. */

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { DEFAULT_SENSITIVE_APPS } from './sensitive-apps';
+import { GOOGLE_CLIENT_ID } from './notifications';
 
 export const SETTINGS_VERSION = 1;
 
@@ -7,6 +8,15 @@ const providerSettingsSchema = z.object({
   model: z.string().min(1),
   /** Stop using this provider for the day after this many requests (free-tier guard). */
   dailyLimit: z.number().int().min(0),
+});
+
+const geminiSettingsSchema = providerSettingsSchema.extend({
+  /**
+   * A second Gemini model, tried right after the main one when it's overloaded. Busy spells hit
+   * one model at a time, and each model has its own free-tier quota. null turns it off.
+   */
+  backupModel: z.string().min(1).nullable(),
+  backupDailyLimit: z.number().int().min(0),
 });
 
 export const routineSchema = z.object({
@@ -38,7 +48,7 @@ export const settingsSchema = z.object({
   llm: z.object({
     /** Providers are tried in this order; later ones are fallbacks. */
     order: z.array(z.enum(['gemini', 'groq'])).min(1),
-    gemini: providerSettingsSchema,
+    gemini: geminiSettingsSchema,
     groq: providerSettingsSchema,
   }),
   voice: z.object({
@@ -57,6 +67,18 @@ export const settingsSchema = z.object({
     duckOthers: z.boolean(),
     /** Microphone to use; null means the Windows default. */
     inputDeviceId: z.string().min(1).nullable(),
+    /** Its name ("Microphone (USB Audio)"), which Windows' echo canceller selects it by. */
+    inputDeviceLabel: z.string().min(1).max(200).nullable(),
+    /**
+     * Remove whatever the speakers play (music, games, videos, Aida herself) from the microphone
+     * with Windows' own echo canceller, so "Hey Aida" works over loud audio.
+     */
+    cancelEcho: z.boolean(),
+    /**
+     * Only accept "Hey Aida" in the owner's voice (their voiceprint, recorded in Settings).
+     * Ignores other people, and voices from speakers and TVs.
+     */
+    onlyMyVoice: z.boolean(),
   }),
   weather: z.object({
     /** Home city for "what's the weather"; set by name in Settings, never from an IP lookup. */
@@ -76,6 +98,23 @@ export const settingsSchema = z.object({
       .string()
       .regex(/^[0-9a-f]{32}$/i, 'A Spotify Client ID is 32 letters and numbers.')
       .nullable(),
+  }),
+  google: z.object({
+    /** Client ID of the user's own Google "Desktop app" sign-in (its secret is in the vault). */
+    clientId: z
+      .string()
+      .regex(GOOGLE_CLIENT_ID, 'A Google Client ID ends in .apps.googleusercontent.com.')
+      .nullable(),
+  }),
+  notifications: z.object({
+    /** Read new emails and upcoming events aloud at a good moment. */
+    enabled: z.boolean(),
+    /** Which new emails: Gmail's Primary tab, ones marked Important, all of the inbox, or none. */
+    gmail: z.enum(['off', 'primary', 'important', 'all']),
+    /** Minutes before a calendar event to mention it; null: no calendar reminders. */
+    calendarMinutes: z.number().int().min(0).max(120).nullable(),
+    /** Wait while in a full-screen app or game, on a call or away, then sum up what came in. */
+    holdWhenBusy: z.boolean(),
   }),
   /** Named lists of commands, run in order when the user says the name ("gaming mode"). */
   routines: z.array(routineSchema).max(20),
@@ -106,7 +145,12 @@ export const DEFAULT_SETTINGS: Settings = {
   privacy: { maskContactInfo: false, sensitiveApps: [...DEFAULT_SENSITIVE_APPS] },
   llm: {
     order: ['gemini', 'groq'],
-    gemini: { model: 'gemini-3.5-flash-lite', dailyLimit: 450 },
+    gemini: {
+      model: 'gemini-3.5-flash-lite',
+      dailyLimit: 450,
+      backupModel: 'gemini-3.1-flash-lite',
+      backupDailyLimit: 450,
+    },
     groq: { model: 'qwen/qwen3.8-27b', dailyLimit: 900 },
   },
   voice: {
@@ -118,9 +162,14 @@ export const DEFAULT_SETTINGS: Settings = {
     showOverlay: true,
     duckOthers: true,
     inputDeviceId: null,
+    inputDeviceLabel: null,
+    cancelEcho: true,
+    onlyMyVoice: true,
   },
   weather: { place: null, unit: 'auto' },
   spotify: { clientId: null },
+  google: { clientId: null },
+  notifications: { enabled: true, gmail: 'primary', calendarMinutes: 10, holdWhenBusy: true },
   routines: [],
   shortcuts: {
     palette: 'Control+Alt+A',

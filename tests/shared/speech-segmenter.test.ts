@@ -83,6 +83,76 @@ describe('SpeechSegmenter', () => {
     ).toEqual(['start']);
   });
 
+  it('reports a pause early so transcription can start before the end', () => {
+    const s = new SpeechSegmenter({ ...DEFAULT_SEGMENTER, speculateMs: 320 });
+    const events = feed(s, [
+      [0.9, 1600],
+      [0.05, 800],
+    ]);
+    expect(events.map((e) => e.type)).toEqual(['start', 'pause', 'end']);
+    const pause = events[1] as Extract<SegmenterEvent, { type: 'pause' }>;
+    const end = events[2] as Extract<SegmenterEvent, { type: 'end' }>;
+    // Only silence followed, so the pause's audio is the utterance.
+    expect(end.sameAsPause).toBe(true);
+    expect(end.samples).toEqual(pause.samples);
+  });
+
+  it('does not reuse a pause when speech went on after it', () => {
+    const s = new SpeechSegmenter({ ...DEFAULT_SEGMENTER, speculateMs: 320 });
+    const events = feed(s, [
+      [0.9, 800],
+      [0.05, 400], // long enough for a pause, too short to end
+      [0.9, 800],
+      [0.05, 800],
+    ]);
+    expect(events.map((e) => e.type)).toEqual(['start', 'pause', 'pause', 'end']);
+    const firstPause = events[1] as Extract<SegmenterEvent, { type: 'pause' }>;
+    const end = events[3] as Extract<SegmenterEvent, { type: 'end' }>;
+    expect(end.sameAsPause).toBe(true);
+    expect(end.samples.length).toBeGreaterThan(firstPause.samples.length);
+    // A soft sound (between the thresholds) after the pause also counts as going on.
+    const soft = new SpeechSegmenter({ ...DEFAULT_SEGMENTER, speculateMs: 320 });
+    const softEvents = feed(soft, [
+      [0.9, 800],
+      [0.05, 352],
+      [0.4, 64],
+      [0.05, 800],
+    ]);
+    expect(softEvents.at(-1)).toMatchObject({ type: 'end' });
+    expect((softEvents.at(-1) as { sameAsPause?: boolean }).sameAsPause).toBeUndefined();
+  });
+
+  it('cuts continuous sound into overlapping windows', () => {
+    const s = new SpeechSegmenter({
+      ...DEFAULT_SEGMENTER,
+      cutMs: 2000,
+      overlapMs: 640,
+      maxSpeechMs: 15_000,
+    });
+    const events = feed(s, [[0.9, 5000]]);
+    // 2 s windows that each start 640 ms into the last: cuts at about 2.0, 3.4 and 4.7 s.
+    expect(events.map((e) => e.type)).toEqual(['start', 'end', 'end', 'end']);
+    const [first, second] = events.slice(1) as Extract<SegmenterEvent, { type: 'end' }>[];
+    expect(first!.cut).toBe(true);
+    expect(second!.cut).toBe(true);
+    // Each later window starts with the last 640 ms of the one before.
+    const firstMs = (first!.samples.length / 16_000) * 1000;
+    expect(firstMs).toBeGreaterThanOrEqual(2000);
+    expect(firstMs).toBeLessThan(2000 + 420);
+    expect(s.continuesCut).toBe(true);
+  });
+
+  it('drops the overlap to carry on after a wake phrase in a cut window', () => {
+    const s = new SpeechSegmenter({ ...DEFAULT_SEGMENTER, cutMs: 2000, overlapMs: 640 });
+    feed(s, [[0.9, 2000]]); // cut once
+    feed(s, [[0.9, 320]]); // 320 ms more after the cut
+    s.dropOverlap();
+    expect(s.continuesCut).toBe(false);
+    const end = s.flush() as Extract<SegmenterEvent, { type: 'end' }>;
+    // Only what was said after the cut.
+    expect((end.samples.length / 16_000) * 1000).toBeLessThanOrEqual(352);
+  });
+
   it('flush ends the current segment immediately (push-to-talk released)', () => {
     const seg = new SpeechSegmenter({ ...DEFAULT_SEGMENTER, endSilenceMs: 15_000 });
     expect(seg.flush()).toBeNull();

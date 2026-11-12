@@ -1,6 +1,7 @@
 import { parseClockTime, parseDuration } from '../tools/info/timers';
 import { findUnit } from '../tools/info/units';
 import { normalizeUrl } from '../tools/apps/tools';
+import { dayIndex } from '../tools/info/weather';
 
 export interface PlannedCall {
   name: string;
@@ -188,6 +189,62 @@ function parseSpotify(clause: string): PlannedCall | null {
 }
 
 /** "remember that I take my coffee black", "when I say my editor, I mean VS Code". */
+/** Notifications, Gmail and Google Calendar: "what did I miss", "check my email", "what's on my calendar tomorrow". */
+function parseNotifications(clause: string): PlannedCall | null {
+  if (
+    /^(?:what did i miss|what have i missed|did i miss anything|anything new|(?:any|do i have any) (?:new )?notifications|(?:read|check|what are) (?:me )?(?:my |the )?(?:new )?notifications)$/.test(
+      clause,
+    )
+  )
+    return { name: 'read_notifications', args: {} };
+
+  let m =
+    /^(?:mute|pause|silence|stop|turn off|hold) (?:the |my |all )?notifications(?: for (.+))?$/.exec(
+      clause,
+    );
+  if (m) {
+    if (!m[1]) return { name: 'mute_notifications', args: {} };
+    const ms = parseDuration(m[1]);
+    return ms
+      ? { name: 'mute_notifications', args: { minutes: Math.max(1, Math.round(ms / 60_000)) } }
+      : null;
+  }
+  if (
+    /^(?:unmute|resume|unpause) (?:the |my )?notifications$|^turn (?:the |my )?notifications (?:back )?on$|^turn on (?:the |my )?notifications$/.test(
+      clause,
+    )
+  )
+    return { name: 'mute_notifications', args: { off: true } };
+
+  if (
+    /^(?:(?:do i have|have i got|did i get|are there) (?:any )?(?:new |unread )?(?:e-?mails?|mail)|check (?:my )?(?:e-?mails?|mail|inbox|gmail)|(?:any )?(?:new|unread) e-?mails?|read (?:me )?my (?:new |unread )?e-?mails?|what(?:'s| is) in my inbox)$/.test(
+      clause,
+    )
+  )
+    return { name: 'check_email', args: {} };
+
+  if (
+    /^(?:when(?:'s| is)|what(?:'s| is)) my next (?:meeting|event|appointment|call)$|^what do i have next$/.test(
+      clause,
+    )
+  )
+    return { name: 'get_calendar', args: { when: 'next' } };
+  m =
+    /^(?:what(?:'s| is) (?:on )?|what do i have (?:on )?|check |read (?:me )?)(?:my |the )?(?:calendar|schedule|agenda)(?: (?:for |on )?(.+))?$/.exec(
+      clause,
+    ) ??
+    /^what do i have (?:going on )?(today|tomorrow|(?:on |this )?(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday))$/.exec(
+      clause,
+    ) ??
+    /^(?:do i have|are there) any (?:meetings|events|appointments)(?: (?:on )?(.+))?$/.exec(clause);
+  if (m) {
+    const when = m[1]?.trim();
+    if (when && typeof dayIndex(when, new Date()) !== 'number') return null;
+    return { name: 'get_calendar', args: when ? { when } : {} };
+  }
+  return null;
+}
+
 function parseMemory(clause: string): PlannedCall | null {
   let m: RegExpExecArray | null;
   if (
@@ -293,7 +350,11 @@ function parseClause(clause: string): PlannedCall | null {
 
   // Weather, unit conversion and Spotify (before media: "stop shuffling" isn't "pause").
   const info =
-    parseWeather(clause) ?? parseConversion(clause) ?? parseMemory(clause) ?? parseSpotify(clause);
+    parseWeather(clause) ??
+    parseConversion(clause) ??
+    parseNotifications(clause) ??
+    parseMemory(clause) ??
+    parseSpotify(clause);
   if (info) return info;
 
   // Per-app volume: "set spotify volume to 30", "discord volume 20", "mute chrome".

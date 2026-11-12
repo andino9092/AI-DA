@@ -1,11 +1,20 @@
 import type { AssistantEvent } from './assistant';
 import type { ModelStatus } from './models';
-import type { AudioCommand, AudioEvent, MonitorEvent, OverlayState, Utterance } from './voice';
+import type {
+  AudioCommand,
+  AudioEvent,
+  MonitorEvent,
+  OverlayState,
+  Utterance,
+  VoiceIdResult,
+  VoiceIdStatus,
+} from './voice';
 import type { KeyTestResult, ProviderUsage } from './llm';
 import type { AddSensitiveValueResult, SensitiveValueSummary } from './privacy';
 import type { Settings, SettingsPatch } from './settings';
 import type { SecretName, SecretsSnapshot } from './secrets';
 import type { SpotifyConnectResult, SpotifyStatus } from './spotify';
+import type { GoogleConnectResult, NotificationsSnapshot } from './notifications';
 import type { MemorySnapshot } from './memory';
 
 /** Every IPC channel lives here so main and preload can never drift apart. */
@@ -42,6 +51,11 @@ export const IPC = {
   modelsInstall: 'models:install',
   modelsChanged: 'models:changed',
   weatherFindPlace: 'weather:find-place',
+  voiceIdStatus: 'voice-id:status',
+  voiceIdRecord: 'voice-id:record',
+  voiceIdSave: 'voice-id:save',
+  voiceIdCancel: 'voice-id:cancel',
+  voiceIdClear: 'voice-id:clear',
   memoryList: 'memory:list',
   memoryRemove: 'memory:remove',
   memoryClear: 'memory:clear',
@@ -49,7 +63,18 @@ export const IPC = {
   spotifyStatus: 'spotify:status',
   spotifyConnect: 'spotify:connect',
   spotifyDisconnect: 'spotify:disconnect',
+  notificationsSnapshot: 'notifications:snapshot',
+  notificationsSetClient: 'notifications:set-client',
+  notificationsClearClient: 'notifications:clear-client',
+  notificationsConnect: 'notifications:connect',
+  notificationsDisconnect: 'notifications:disconnect',
+  notificationsTest: 'notifications:test',
+  notificationsUnmute: 'notifications:unmute',
+  notificationsChanged: 'notifications:changed',
 } as const;
+
+export type SetGoogleClientResult =
+  { ok: true; snapshot: NotificationsSnapshot } | { ok: false; error: string };
 
 export interface AppInfo {
   version: string;
@@ -112,6 +137,13 @@ export interface AidaApi {
     /** Settings → Mic check: turn live reporting on or off for this window. */
     monitor(enabled: boolean): Promise<void>;
     onMonitor(listener: (event: MonitorEvent) => void): () => void;
+    /** "Only respond to my voice": record samples, save or forget the voiceprint. */
+    idStatus(): Promise<VoiceIdStatus>;
+    /** add: record over background sound and add to the saved voiceprint. */
+    idRecord(add?: boolean): Promise<VoiceIdResult>;
+    idSave(): Promise<VoiceIdResult>;
+    idCancel(): Promise<VoiceIdStatus>;
+    idClear(): Promise<VoiceIdStatus>;
   };
   weather: {
     /** Looks the city up (Open-Meteo) and saves it as the home city. */
@@ -128,6 +160,20 @@ export interface AidaApi {
     /** Opens Spotify's sign-in page and waits until the user finishes (up to 3 minutes). */
     connect(): Promise<SpotifyConnectResult>;
     disconnect(): Promise<SpotifyStatus>;
+  };
+  notifications: {
+    snapshot(): Promise<NotificationsSnapshot>;
+    /** Saves the user's Google sign-in app (the secret goes into the encrypted vault). */
+    setGoogleClient(clientId: string, clientSecret: string): Promise<SetGoogleClientResult>;
+    /** Forgets the sign-in app and signs out. */
+    clearGoogleClient(): Promise<NotificationsSnapshot>;
+    /** Opens Google's sign-in page and waits until the user finishes (up to 3 minutes). */
+    connect(): Promise<GoogleConnectResult>;
+    disconnect(): Promise<NotificationsSnapshot>;
+    /** A sample notification, read out by the same rules as real ones. */
+    test(): Promise<NotificationsSnapshot>;
+    unmute(): Promise<NotificationsSnapshot>;
+    onChanged(listener: (snapshot: NotificationsSnapshot) => void): () => void;
   };
   palette: {
     submit(text: string): Promise<void>;

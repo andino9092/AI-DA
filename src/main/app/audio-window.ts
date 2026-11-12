@@ -10,6 +10,10 @@ const MAX_SAMPLES = 16_000 * 20;
 const utteranceSchema = z.object({
   mode: z.enum(['off', 'wake', 'command']),
   samples: z.instanceof(Float32Array).refine((s) => s.length > 0 && s.length <= MAX_SAMPLES),
+  segment: z.number().int().nonnegative().optional(),
+  tentative: z.boolean().optional(),
+  reuse: z.boolean().optional(),
+  cut: z.boolean().optional(),
 });
 
 /**
@@ -29,10 +33,7 @@ export class AudioWindow {
   ) {
     ipcMain.on(IPC.voiceEvent, (event, payload: AudioEvent) => {
       if (!this.isAudioSender(event)) return;
-      if (payload.type === 'ready') {
-        this.ready = true;
-        if (this.config) this.send(this.config);
-      }
+      if (payload.type === 'ready') this.pageReady();
       this.handlers.onEvent(payload);
     });
     ipcMain.on(IPC.voiceUtterance, (event, payload: unknown) => {
@@ -69,6 +70,7 @@ export class AudioWindow {
     win.webContents.on('render-process-gone', () => {
       this.win = null;
       this.ready = false;
+      for (const listener of this.pageGone) listener();
       setTimeout(() => this.start(), 1000);
     });
     const devUrl = process.env['ELECTRON_RENDERER_URL'];
@@ -79,8 +81,33 @@ export class AudioWindow {
 
   send(command: AudioCommand): void {
     if (command.type === 'config') this.config = command;
-    if (!this.ready || !this.win || this.win.isDestroyed()) return;
+    if (!this.ready || !this.win || this.win.isDestroyed()) {
+      // Voice-engine requests wait for the page (the engine starts before the window is ready).
+      if (command.type === 'tts') this.pendingTts.push(command);
+      return;
+    }
     this.win.webContents.send(IPC.voiceCommand, command);
+  }
+
+  /** Called when the page is replaced (crash or reload): anything running in it is gone. */
+  onPageGone(listener: () => void): () => void {
+    this.pageGone.add(listener);
+    return () => this.pageGone.delete(listener);
+  }
+
+  private readonly pendingTts: AudioCommand[] = [];
+  private readonly pageGone = new Set<() => void>();
+  private loads = 0;
+
+  private pageReady(): void {
+    this.ready = true;
+    // A second "ready" means the page reloaded, taking its voice engine with it.
+    if (this.loads++ > 0) {
+      this.pendingTts.length = 0;
+      for (const listener of this.pageGone) listener();
+    }
+    if (this.config) this.send(this.config);
+    for (const command of this.pendingTts.splice(0)) this.send(command);
   }
 
   destroy(): void {

@@ -1,5 +1,11 @@
+/** A place in the router's list: a provider, or its backup model ("gemini-backup"). */
+export type ProviderSlot = 'gemini' | 'gemini-backup' | 'groq';
+
 export interface ProviderUsage {
-  provider: 'gemini' | 'groq';
+  slot: ProviderSlot;
+  /** "Gemini", "Gemini (backup)", "Groq". */
+  label: string;
+  model: string;
   /** An API key is saved for this provider. */
   configured: boolean;
   /** Requests today (resets at midnight Pacific, like the free tiers). */

@@ -6,6 +6,7 @@ import {
 } from '@shared/voice';
 import { DEFAULT_HOLD, HoldRecorder } from '@shared/hold-recorder';
 import { DEFAULT_SEGMENTER, SpeechSegmenter } from '@shared/speech-segmenter';
+import type { TtsRequest, TtsResponse } from '@shared/tts-protocol';
 import { Player } from './player';
 import { SileroVad } from './vad';
 
@@ -17,7 +18,12 @@ const voice = window.aida.voice;
 const COMMAND_TIMEOUT_MS = 7000;
 const LEVEL_INTERVAL_MS = 66;
 
+type MicSource = 'browser' | 'system';
+
 let mode: ListenMode = 'off';
+/** Where the microphone comes from: opened here, or echo-cancelled by Windows (mic-audio). */
+let source: MicSource = 'browser';
+const FRAME_SAMPLES = 512;
 let deviceId: string | null = null;
 let sensitivity: WakeSensitivity = 'normal';
 /** Settings → Mic check is open: report the level all the time, not just while speaking. */
@@ -30,6 +36,8 @@ let capture: AudioContext | null = null;
 let commandTimer: number | undefined;
 let lastLevelAt = 0;
 let processing: Promise<void> = Promise.resolve();
+/** Numbers each stretch of speech, so a pause's early transcript matches its final one. */
+let segment = 0;
 
 const segmenter = new SpeechSegmenter(DEFAULT_SEGMENTER);
 const recorder = new HoldRecorder(DEFAULT_HOLD);
@@ -38,6 +46,23 @@ const RECENT_FRAMES = 12;
 const recent: { frame: Float32Array; probability: number }[] = [];
 const player = new Player((id) => voice.sendEvent({ type: 'playback-finished', id }));
 
+/** The graphics-card voice engine, started on the first request from the main process. */
+let ttsWorker: Worker | null = null;
+
+function ttsRequest(request: TtsRequest): void {
+  if (!ttsWorker) {
+    ttsWorker = new Worker(new URL('./tts-gpu-worker.ts', import.meta.url), { type: 'module' });
+    ttsWorker.onmessage = (e: MessageEvent<TtsResponse>) =>
+      voice.sendEvent({ type: 'tts', response: e.data });
+    ttsWorker.onerror = (e) => {
+      voice.sendEvent({ type: 'tts', response: { type: 'error', message: e.message } });
+      ttsWorker?.terminate();
+      ttsWorker = null;
+    };
+  }
+  ttsWorker.postMessage(request);
+}
+
 function configureSegmenter() {
   const { positive, negative } = VAD_THRESHOLDS[sensitivity];
   segmenter.configure({
@@ -45,6 +70,12 @@ function configureSegmenter() {
     endSilenceMs: mode === 'command' ? 800 : 640,
     positiveThreshold: positive,
     negativeThreshold: negative,
+    // Start transcribing after a short pause instead of waiting for the end.
+    speculateMs: 320,
+    // Music or a TV can keep the speech detector busy: check it in overlapping 6 s windows so
+    // "Hey Aida" is still noticed. Commands aren't cut.
+    cutMs: mode === 'wake' ? 6000 : 0,
+    overlapMs: 2000,
   });
 }
 
@@ -107,10 +138,21 @@ async function onFrame(frame: Float32Array): Promise<void> {
   const event = segmenter.push(frame, probability);
 
   if (event?.type === 'start') {
+    segment++;
     window.clearTimeout(commandTimer);
     voice.sendEvent({ type: 'speech-start', mode });
+  } else if (event?.type === 'pause') {
+    voice.sendUtterance({ mode, samples: event.samples, segment, tentative: true });
   } else if (event?.type === 'end') {
-    voice.sendUtterance({ mode, samples: event.samples });
+    voice.sendUtterance({
+      mode,
+      samples: event.samples,
+      segment,
+      ...(event.sameAsPause ? { reuse: true } : {}),
+      ...(event.cut ? { cut: true } : {}),
+    });
+    // A cut window's speech goes on as a new stretch.
+    if (event.cut) segment++;
   } else if (event?.type === 'discard' && mode === 'command') {
     armCommandTimeout();
   }
@@ -153,9 +195,12 @@ async function applyConfig(
   nextSensitivity: WakeSensitivity,
   nextMeter: boolean,
   nextHold: boolean,
+  nextSource: MicSource,
 ): Promise<void> {
   if (next !== 'off' && !(await ensureVad())) next = 'off';
   const deviceChanged = nextDevice !== deviceId;
+  const sourceChanged = nextSource !== source;
+  source = nextSource;
   const wasOpen = mode !== 'off';
   const wasCommand = mode === 'command';
   mode = next;
@@ -174,12 +219,24 @@ async function applyConfig(
     voice.sendEvent({ type: 'mic-state', open: false });
     return;
   }
-  const reopened = !wasOpen || deviceChanged || !stream;
-  if (reopened) await openMic();
+  const reopened =
+    !wasOpen || sourceChanged || (source === 'browser' && (deviceChanged || !stream));
+  if (reopened) {
+    if (source === 'browser') await openMic();
+    else {
+      // Windows' echo canceller owns the mic; its audio arrives as mic-audio.
+      closeMic();
+      voice.sendEvent({ type: 'mic-state', open: true });
+    }
+  }
   if (mode === 'command') {
     // Entering command mode starts fresh; changing hold or the meter mid-command must not drop
-    // what's being said. Holding push-to-talk records until it's released.
-    if (!wasCommand) segmenter.reset();
+    // what's being said. Holding push-to-talk records until it's released. After "Hey Aida" in
+    // a window cut from continuous sound, the sentence is still going: keep what came after.
+    if (!wasCommand) {
+      if (segmenter.continuesCut) segmenter.dropOverlap();
+      else segmenter.reset();
+    }
     if (hold && !recorder.active) recorder.start(reopened ? [] : recent);
     if (!hold && !segmenter.isSpeaking) armCommandTimeout();
   }
@@ -209,7 +266,15 @@ voice.onCommand((command: AudioCommand) => {
         command.sensitivity,
         command.meter,
         command.hold,
+        command.source,
       );
+      break;
+    case 'mic-audio':
+      if (source !== 'system' || mode === 'off') break;
+      for (let i = 0; i + FRAME_SAMPLES <= command.samples.length; i += FRAME_SAMPLES) {
+        const frame = command.samples.slice(i, i + FRAME_SAMPLES);
+        processing = processing.then(() => onFrame(frame));
+      }
       break;
     case 'play':
       player.play(command.id, command.samples, command.sampleRate);
@@ -225,6 +290,9 @@ voice.onCommand((command: AudioCommand) => {
       break;
     case 'chime':
       player.chime(command.chime);
+      break;
+    case 'tts':
+      ttsRequest(command.request);
       break;
   }
 });

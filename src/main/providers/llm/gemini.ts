@@ -17,7 +17,7 @@ import {
 const FOREIGN_SIGNATURE = 'skip_thought_signature_validator';
 const TIMEOUT_MS = 20_000;
 
-function toContents(messages: ChatMessage[]): Content[] {
+export function toContents(messages: ChatMessage[], model: string): Content[] {
   return messages.map((m): Content => {
     if (m.role === 'user') return { role: 'user', parts: [{ text: m.text }] };
     if (m.role === 'tool') {
@@ -28,7 +28,7 @@ function toContents(messages: ChatMessage[]): Content[] {
         })),
       };
     }
-    if (m.raw?.provider === 'gemini') return m.raw.content as Content;
+    if (m.raw?.provider === 'gemini' && m.raw.model === model) return m.raw.content as Content;
     const parts: Part[] = [];
     if (m.text) parts.push({ text: m.text });
     for (const call of m.toolCalls ?? []) {
@@ -56,7 +56,7 @@ export class GeminiProvider implements LlmProvider {
     try {
       const response = await this.client.models.generateContent({
         model: this.model,
-        contents: toContents(request.messages),
+        contents: toContents(request.messages, this.model),
         config: {
           abortSignal: signal,
           systemInstruction: request.system,
@@ -103,7 +103,7 @@ export class GeminiProvider implements LlmProvider {
       return {
         text: stripThinking(text),
         toolCalls,
-        raw: replay ? { provider: 'gemini', content: replay } : undefined,
+        raw: replay ? { provider: 'gemini', model: this.model, content: replay } : undefined,
       };
     } catch (err) {
       if (signal.aborted) throw new ProviderError('aborted', 'Cancelled.');

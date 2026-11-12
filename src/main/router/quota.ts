@@ -1,7 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { z } from 'zod';
-import type { ProviderId } from '../providers/llm/types';
-import type { ProviderUsage } from '@shared/llm';
+import type { ProviderSlot, ProviderUsage } from '@shared/llm';
 import { writeFileAtomic } from '../util/atomic-write';
 
 /** rate_limit: 429 · auth: key rejected · busy: overloaded or unreachable (tried again if nothing else works). */
@@ -15,12 +14,12 @@ export function quotaDay(now = new Date()): string {
 }
 
 /**
- * Counts requests per provider per day (persisted, so restarts don't reset the count) and
+ * Counts requests per provider slot per day (persisted, so restarts don't reset the count) and
  * remembers short cool-downs after rate-limit errors (in memory).
  */
 export class QuotaTracker {
   private counts: Record<string, { day: string; count: number }>;
-  private readonly coolUntil = new Map<ProviderId, { until: number; reason: CoolDownReason }>();
+  private readonly coolUntil = new Map<ProviderSlot, { until: number; reason: CoolDownReason }>();
 
   constructor(
     private readonly filePath: string,
@@ -29,12 +28,12 @@ export class QuotaTracker {
     this.counts = this.load();
   }
 
-  used(provider: ProviderId): number {
+  used(provider: ProviderSlot): number {
     const entry = this.counts[provider];
     return entry && entry.day === quotaDay(this.now()) ? entry.count : 0;
   }
 
-  record(provider: ProviderId): void {
+  record(provider: ProviderSlot): void {
     this.counts[provider] = { day: quotaDay(this.now()), count: this.used(provider) + 1 };
     try {
       writeFileAtomic(this.filePath, JSON.stringify(this.counts));
@@ -43,33 +42,35 @@ export class QuotaTracker {
     }
   }
 
-  coolDown(provider: ProviderId, ms: number, reason: CoolDownReason = 'rate_limit'): void {
+  coolDown(provider: ProviderSlot, ms: number, reason: CoolDownReason = 'rate_limit'): void {
     this.coolUntil.set(provider, { until: this.now().getTime() + ms, reason });
   }
 
-  isCoolingDown(provider: ProviderId): boolean {
+  isCoolingDown(provider: ProviderSlot): boolean {
     return this.coolingReason(provider) !== null;
   }
 
   /** Why a provider is being skipped right now, or null if it isn't. */
-  coolingReason(provider: ProviderId): CoolDownReason | null {
+  coolingReason(provider: ProviderSlot): CoolDownReason | null {
     const entry = this.coolUntil.get(provider);
     return entry && entry.until > this.now().getTime() ? entry.reason : null;
   }
 
   /** A request worked: forget any cool-down. */
-  clear(provider: ProviderId): void {
+  clear(provider: ProviderSlot): void {
     this.coolUntil.delete(provider);
   }
 
-  usage(provider: ProviderId, limit: number, configured: boolean): ProviderUsage {
+  usage(
+    slot: ProviderSlot,
+    info: { label: string; model: string; limit: number; configured: boolean },
+  ): ProviderUsage {
     return {
-      provider,
-      configured,
-      used: this.used(provider),
-      limit,
-      coolingDown: this.isCoolingDown(provider),
-      coolingReason: this.coolingReason(provider),
+      slot,
+      ...info,
+      used: this.used(slot),
+      coolingDown: this.isCoolingDown(slot),
+      coolingReason: this.coolingReason(slot),
     };
   }
 

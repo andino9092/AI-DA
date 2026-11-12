@@ -11,6 +11,9 @@ import { QuotaTracker } from '../../../src/main/router/quota';
 import { LlmRouter, NoProviderError, testProvider } from '../../../src/main/router/router';
 import { JsonlLog } from '../../../src/main/safety/action-log';
 import { FakeProvider, tempDir } from '../fakes';
+import { providerSlots } from '../../../src/main/providers/llm/factory';
+import { toContents } from '../../../src/main/providers/llm/gemini';
+import { DEFAULT_SETTINGS } from '../../../src/shared/settings';
 
 const request: LlmRequest = {
   system: PrivacyGuard.constant('test'),
@@ -117,6 +120,112 @@ describe('LlmRouter', () => {
     const { ask, health } = setup([gemini]);
     await failure(ask());
     expect(health).toEqual(['unreachable']);
+  });
+});
+
+describe('LlmRouter: backup Gemini model', () => {
+  function withBackup(main: LlmProvider, backup: LlmProvider, groq?: LlmProvider, limit = 100) {
+    const dir = tempDir();
+    const quota = new QuotaTracker(join(dir, 'quota.json'));
+    const router = new LlmRouter(
+      () => [
+        { provider: main, dailyLimit: 100, slot: 'gemini', label: 'Gemini' },
+        { provider: backup, dailyLimit: limit, slot: 'gemini-backup', label: 'Gemini (backup)' },
+        ...(groq ? [{ provider: groq, dailyLimit: 100 }] : []),
+      ],
+      quota,
+      new JsonlLog(join(dir, 'logs'), 'outbound'),
+      undefined,
+      { sleep: async () => {} },
+    );
+    const ask = () => router.complete(request, 'r1', new AbortController().signal);
+    return { ask, quota };
+  }
+
+  it('goes straight to the backup model when the main one is overloaded', async () => {
+    const main = new FakeProvider('gemini', [overloaded()], 'flash-lite');
+    const backup = new FakeProvider('gemini', [ok], 'flash-lite-backup');
+    const groq = new FakeProvider('groq', []);
+    const { ask, quota } = withBackup(main, backup, groq);
+    await expect(ask()).resolves.toMatchObject({ provider: 'gemini' });
+    // No retry of the busy model: the backup answers sooner.
+    expect(main.requests).toHaveLength(1);
+    expect(backup.requests).toHaveLength(1);
+    expect(groq.requests).toHaveLength(0);
+    expect(quota.coolingReason('gemini')).toBe('busy');
+    expect(quota.coolingReason('gemini-backup')).toBeNull();
+    expect(quota.used('gemini-backup')).toBe(1);
+  });
+
+  it('skips the backup model when the key itself is rejected', async () => {
+    const main = new FakeProvider('gemini', [badKey()]);
+    const backup = new FakeProvider('gemini', [ok]);
+    const groq = new FakeProvider('groq', [ok]);
+    const { ask, quota } = withBackup(main, backup, groq);
+    await expect(ask()).resolves.toMatchObject({ provider: 'groq' });
+    expect(backup.requests).toHaveLength(0);
+    expect(quota.coolingReason('gemini-backup')).toBe('auth');
+  });
+
+  it('counts the backup model against its own daily limit', async () => {
+    const main = new FakeProvider('gemini', [overloaded(), overloaded()]);
+    const backup = new FakeProvider('gemini', [ok, ok]);
+    const groq = new FakeProvider('groq', [ok]);
+    const { ask } = withBackup(main, backup, groq, 1);
+    await expect(ask()).resolves.toMatchObject({ provider: 'gemini' });
+    // The backup used its one request for today; Groq answers next time.
+    await expect(ask()).resolves.toMatchObject({ provider: 'groq' });
+    expect(backup.requests).toHaveLength(1);
+  });
+
+  it('names each model when everything fails', async () => {
+    const main = new FakeProvider('gemini', [overloaded()]);
+    const backup = new FakeProvider('gemini', [deadline()]);
+    const { ask } = withBackup(main, backup);
+    const error = await failure(ask());
+    expect(error.message).toContain('Gemini is busy or unreachable right now');
+    expect(error.message).toContain('and Gemini (backup) is busy or unreachable right now');
+  });
+});
+
+describe('providerSlots', () => {
+  const llm = DEFAULT_SETTINGS.llm;
+
+  it('puts the backup model right after the main Gemini model', () => {
+    expect(providerSlots(llm).map((s) => [s.slot, s.model])).toEqual([
+      ['gemini', 'gemini-3.5-flash-lite'],
+      ['gemini-backup', 'gemini-3.1-flash-lite'],
+      ['groq', llm.groq.model],
+    ]);
+    expect(providerSlots({ ...llm, order: ['groq', 'gemini'] }).map((s) => s.slot)).toEqual([
+      'groq',
+      'gemini',
+      'gemini-backup',
+    ]);
+  });
+
+  it('leaves the backup out when it is off or the same model', () => {
+    const off = { ...llm, gemini: { ...llm.gemini, backupModel: null } };
+    const same = { ...llm, gemini: { ...llm.gemini, backupModel: llm.gemini.model } };
+    expect(providerSlots(off).map((s) => s.slot)).toEqual(['gemini', 'groq']);
+    expect(providerSlots(same).map((s) => s.slot)).toEqual(['gemini', 'groq']);
+  });
+});
+
+describe('Gemini replay', () => {
+  it("replays a turn's thought signatures only to the model that wrote it", () => {
+    const raw = { role: 'model', parts: [{ text: 'hi', thoughtSignature: 'sig' }] };
+    const messages = [
+      {
+        role: 'assistant' as const,
+        text: PrivacyGuard.constant('hi'),
+        raw: { provider: 'gemini' as const, model: 'flash-lite', content: raw },
+      },
+    ];
+    expect(toContents(messages, 'flash-lite')).toEqual([raw]);
+    expect(toContents(messages, 'flash-lite-backup')).toEqual([
+      { role: 'model', parts: [{ text: 'hi' }] },
+    ]);
   });
 });
 

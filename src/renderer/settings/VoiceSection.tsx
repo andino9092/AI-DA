@@ -4,6 +4,7 @@ import type { Settings, SettingsPatch } from '@shared/settings';
 import { KOKORO_VOICES, type WakeSensitivity } from '@shared/voice';
 import { Button, Section, Toggle } from './components';
 import { MicCheck } from './MicCheck';
+import { VoiceId } from './VoiceId';
 import { ModelsCard } from './ModelsCard';
 import { listenReady, useModels } from './models';
 import { ShortcutInput } from './ShortcutInput';
@@ -41,6 +42,13 @@ export function VoiceSection({
 
   const voice = settings.voice;
   const setVoice = (patch: Partial<Settings['voice']>) => update({ voice: { ...voice, ...patch } });
+
+  // Microphones chosen before names were saved: fill in the name (echo cancellation needs it).
+  useEffect(() => {
+    if (!voice.inputDeviceId || voice.inputDeviceLabel) return;
+    const label = mics.find((m) => m.deviceId === voice.inputDeviceId)?.label;
+    if (label) update({ voice: { ...voice, inputDeviceLabel: label } });
+  }, [mics, voice, update]);
   const micCheckBlocked = !listenReady(models)
     ? 'Download the speech models first.'
     : settings.microphoneMuted
@@ -95,6 +103,12 @@ export function VoiceSection({
         onChange={(v) => setVoice({ showOverlay: v })}
       />
       <Toggle
+        label="Hear me over music and games"
+        hint="Uses Windows' own echo cancellation to remove whatever your PC is playing from the microphone, so “Hey Aida” works with music on. Sound from other devices, like a TV, isn't removed."
+        checked={voice.cancelEcho}
+        onChange={(v) => setVoice({ cancelEcho: v })}
+      />
+      <Toggle
         label="Lower other sounds while Aida listens"
         hint="Turns music and videos down while you give a command and while she answers, so she hears you (and you hear her). Put back right after."
         checked={voice.duckOthers}
@@ -107,7 +121,13 @@ export function VoiceSection({
           className={selectClass}
           aria-label="Microphone"
           value={voice.inputDeviceId ?? ''}
-          onChange={(e) => setVoice({ inputDeviceId: e.target.value || null })}
+          onChange={(e) => {
+            const id = e.target.value || null;
+            setVoice({
+              inputDeviceId: id,
+              inputDeviceLabel: mics.find((m) => m.deviceId === id)?.label || null,
+            });
+          }}
         >
           <option value="">Windows default</option>
           {mics.map((m) => (
@@ -117,6 +137,8 @@ export function VoiceSection({
           ))}
         </select>
       </div>
+
+      <VoiceId settings={settings} update={update} />
 
       <MicCheck disabledReason={micCheckBlocked} />
 

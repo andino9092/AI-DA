@@ -19,8 +19,11 @@ export type ChatMessage =
       role: 'assistant';
       text?: ScrubbedText;
       toolCalls?: ToolCall[];
-      /** The provider's own turn (e.g. Gemini thought signatures), replayed only to that provider. */
-      raw?: { provider: ProviderId; content: unknown };
+      /**
+       * The provider's own turn (e.g. Gemini thought signatures), replayed only to the same
+       * provider and model: signatures don't carry over to another model.
+       */
+      raw?: { provider: ProviderId; model?: string; content: unknown };
     }
   | { role: 'tool'; results: { id: string; name: string; content: ScrubbedText }[] };
 
@@ -34,7 +37,7 @@ export interface LlmResponse {
   /** Model output. Not scrubbed: it came from the provider, not from the PC. */
   text: string;
   toolCalls: ToolCall[];
-  raw?: { provider: ProviderId; content: unknown };
+  raw?: { provider: ProviderId; model?: string; content: unknown };
 }
 
 export interface LlmProvider {

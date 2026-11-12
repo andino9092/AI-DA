@@ -12,6 +12,7 @@ import type {
 import { STT_SAMPLE_RATE, type SpeechToText } from './stt';
 import { peakDbfs } from './wav';
 import { matchWakePhrase } from './wake-phrase';
+import { VOICE_MATCH_THRESHOLDS } from '@shared/voice';
 
 export interface VoiceDeps {
   stt: SpeechToText;
@@ -40,6 +41,14 @@ export interface VoiceDeps {
   canSpeak: () => boolean;
   /** Lower other apps' sound while Aida listens or talks (true), and restore it (false). */
   duck?: (on: boolean) => void;
+  /**
+   * Voice recognition: when enabled, "Hey Aida" only counts in the owner's voice. match() gives
+   * the similarity to their voiceprint, or null when the speech is too short to judge.
+   */
+  speaker?: {
+    enabled(): boolean;
+    match(samples: Float32Array): Promise<number | null>;
+  };
 }
 
 /** "Hey Aida, stop" and friends interrupt instead of being sent to the assistant. */
@@ -47,6 +56,8 @@ const STOP_WORDS =
   /^(?:stop|cancel|never ?mind|be quiet|quiet|shut up|shush|that's enough|enough)[.!]*$/i;
 
 const REPLY_VISIBLE_MS = 4000;
+/** After "Hey Aida, <command>" over music, how long to wait for more before running it. */
+const PREFIX_WAIT_MS = 1500;
 /** Holding push-to-talk at least this long means "listen until I let go". */
 const HOLD_MS = 350;
 /** Longest hold before listening stops on its own (the recording itself is capped at ~19 s). */
@@ -85,6 +96,21 @@ export class VoiceController {
   private transcribing = false;
   /** Bumped by panic so a command that was running doesn't speak its reply afterwards. */
   private generation = 0;
+  /** A transcript started during a pause, used if the speaker turns out to be done. */
+  private tentative: {
+    segment: number;
+    abort: AbortController;
+    text: Promise<string>;
+    voice: Promise<number | null> | null;
+  } | null = null;
+  /** Settings is recording a voice sample: the next utterance goes there. */
+  private sampling: ((samples: Float32Array | null) => void) | null = null;
+  /**
+   * What followed "Hey Aida" in a window cut from continuous sound (music): the sentence was
+   * still going, so the rest is heard in command mode and appended to this.
+   */
+  private commandPrefix = '';
+  private prefixTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(private readonly deps: VoiceDeps) {}
 
@@ -98,6 +124,8 @@ export class VoiceController {
       sensitivity,
       meter: this.deps.monitoring(),
       hold: this.holding !== null,
+      // The voice service swaps in Windows' echo-cancelled mic when it can.
+      source: 'browser',
     });
   }
 
@@ -182,15 +210,38 @@ export class VoiceController {
    */
   announce(text: string): void {
     this.deps.audio({ type: 'chime', chime: 'alarm' });
-    const { speakReplies } = this.deps.settings();
-    if (this.phase !== 'idle' || !speakReplies || !this.deps.canSpeak()) {
+    if (!this.canSpeakUp()) {
       this.deps.overlay({ phase: 'reply', text }, 8000);
       return;
     }
+    this.speakUp(text, 1300);
+  }
+
+  /**
+   * A notification (new email, meeting soon): soft chime, then said out loud, but only when Aida
+   * is idle and can talk. False means not now; the caller keeps it for a better moment.
+   */
+  notify(text: string): boolean {
+    if (!this.canSpeakUp()) return false;
+    this.deps.audio({ type: 'chime', chime: 'notify' });
+    this.speakUp(text, 500);
+    return true;
+  }
+
+  /** Nothing going on: not listening, thinking or talking. */
+  get free(): boolean {
+    return this.phase === 'idle';
+  }
+
+  private canSpeakUp(): boolean {
+    return this.phase === 'idle' && this.deps.settings().speakReplies && this.deps.canSpeak();
+  }
+
+  /** Says something Aida brings up herself, after the chime (delayMs) has played. */
+  private speakUp(text: string, delayMs: number): void {
     this.phase = 'speaking';
     this.lastReply = text;
     this.deps.overlay({ phase: 'speaking', text });
-    // Let the chime finish before talking.
     setTimeout(() => {
       if (this.phase !== 'speaking' || this.speech) return;
       void this.say(text).catch(() => {
@@ -198,7 +249,7 @@ export class VoiceController {
         this.deps.overlay({ phase: 'reply', text }, 8000);
         this.toIdle(true);
       });
-    }, 1300);
+    }, delayMs);
   }
 
   /** Panic: stop talking, decline anything waiting for an answer, go back to idle. */
@@ -229,14 +280,19 @@ export class VoiceController {
         this.refresh();
         break;
       case 'speech-start':
-        if (event.mode === 'command') this.deps.overlay({ phase: 'listening' });
+        if (event.mode === 'command') {
+          // More is being said: wait for it instead of running only the start of the command.
+          this.clearPrefixTimer();
+          this.deps.overlay({ phase: 'listening' });
+        }
         break;
       case 'level':
         if (this.phase === 'command' && !this.transcribing)
           this.deps.overlay({ phase: 'listening', level: event.rms });
         break;
       case 'command-timeout':
-        if (this.confirming) this.answer(false);
+        if (this.sampling) this.sampling(null);
+        else if (this.confirming) this.answer(false);
         else if (this.phase === 'command') this.toIdle();
         break;
       case 'no-speech':
@@ -269,6 +325,14 @@ export class VoiceController {
   }
 
   onUtterance(utterance: Utterance): void {
+    if (this.sampling) {
+      if (!utterance.tentative && utterance.mode === 'command') this.sampling(utterance.samples);
+      return;
+    }
+    if (utterance.tentative) {
+      this.speculate(utterance);
+      return;
+    }
     // The answer to a confirmation can't wait in line: the command that asked is still running.
     if (this.confirming && (utterance.mode === 'command' || this.phase === 'command')) {
       void this.handleAnswer(utterance);
@@ -283,15 +347,72 @@ export class VoiceController {
     return this.queue;
   }
 
-  private async process({ mode, samples }: Utterance): Promise<void> {
+  /**
+   * The speaker paused: transcribe what was said so far right away. If only silence follows, the
+   * final utterance reuses this instead of waiting for a transcription after the pause.
+   */
+  private speculate(utterance: Utterance): void {
+    this.tentative?.abort.abort();
+    const abort = new AbortController();
+    const text = this.deps.stt.transcribe(utterance.samples, abort.signal);
+    text.catch(() => {});
+    const voice = utterance.mode === 'wake' ? this.voiceMatch(utterance.samples) : null;
+    this.tentative = { segment: utterance.segment ?? -1, abort, text, voice };
+  }
+
+  /** The transcript and, for wake checks, the voice match; both reused from a pause if possible. */
+  private transcribe(utterance: Utterance): {
+    text: Promise<string>;
+    voice: Promise<number | null> | null;
+  } {
+    const early = this.tentative;
+    const wake = utterance.mode === 'wake' && this.phase !== 'command';
+    if (early && early.segment === utterance.segment) {
+      this.tentative = null;
+      if (utterance.reuse) return { text: early.text, voice: wake ? early.voice : null };
+      early.abort.abort();
+    }
+    return {
+      text: this.deps.stt.transcribe(utterance.samples),
+      // Checked alongside transcription, so it adds no delay.
+      voice: wake ? this.voiceMatch(utterance.samples) : null,
+    };
+  }
+
+  private voiceMatch(samples: Float32Array): Promise<number | null> | null {
+    if (!this.deps.speaker?.enabled()) return null;
+    return this.deps.speaker.match(samples).catch(() => null);
+  }
+
+  /**
+   * Settings → "Record my voice": listens for one utterance and returns its audio (null if
+   * nothing was said in time). It isn't transcribed or acted on.
+   */
+  recordSample(): Promise<Float32Array | null> {
+    if (!this.deps.canListen() || !this.deps.settings().listening) return Promise.resolve(null);
+    this.sampling?.(null);
+    return new Promise((resolve) => {
+      this.sampling = (samples) => {
+        this.sampling = null;
+        this.toIdle(true);
+        resolve(samples);
+      };
+      this.stopSpeaking();
+      this.armCommand();
+    });
+  }
+
+  private async process(utterance: Utterance): Promise<void> {
+    const { mode, samples } = utterance;
     if (mode === 'wake' && this.phase === 'processing') return;
     const expectingCommand = mode === 'command' || this.phase === 'command';
     if (expectingCommand) this.deps.overlay({ phase: 'transcribing' });
 
     let text: string;
     this.transcribing = expectingCommand;
+    const heard = this.transcribe(utterance);
     try {
-      text = await this.deps.stt.transcribe(samples);
+      text = await heard.text;
     } catch (err) {
       if (expectingCommand) this.fail(err instanceof Error ? err.message : String(err));
       return;
@@ -299,7 +420,14 @@ export class VoiceController {
       this.transcribing = false;
     }
 
-    const wake = expectingCommand ? null : matchWakePhrase(text, { fuzzy: this.fuzzy() });
+    let wake = expectingCommand
+      ? null
+      : matchWakePhrase(text, { fuzzy: this.fuzzy(), anywhere: true });
+    // Voice recognition: "Hey Aida" only counts in the owner's voice.
+    const voiceMatch = wake && heard.voice ? await heard.voice : null;
+    const threshold = VOICE_MATCH_THRESHOLDS[this.deps.settings().sensitivity];
+    const notYourVoice = voiceMatch !== null && voiceMatch < threshold;
+    if (notYourVoice) wake = null;
     // The mic check can run with the wake word off: report what was heard, but don't act on it.
     const actOnWake = this.deps.settings().wakeWord;
     if (this.deps.monitoring())
@@ -309,11 +437,14 @@ export class VoiceController {
         accepted: expectingCommand ? text !== '' : wake !== null && actOnWake,
         peakDb: Math.round(peakDbfs(samples)),
         seconds: Math.round((samples.length / STT_SAMPLE_RATE) * 10) / 10,
+        ...(voiceMatch !== null ? { voiceMatch: Math.round(voiceMatch * 100) / 100 } : {}),
+        ...(notYourVoice ? { notYourVoice } : {}),
       });
 
     let command: string;
     if (expectingCommand) {
-      command = text;
+      command = [this.commandPrefix, text].filter(Boolean).join(' ');
+      this.commandPrefix = '';
       if (!command) {
         this.deps.overlay({ phase: 'error', text: "Sorry, I didn't catch that." }, 2500);
         this.toIdle(true);
@@ -321,6 +452,14 @@ export class VoiceController {
       }
     } else {
       if (!wake || !actOnWake) return; // Not for us: dropped without logging.
+      if (utterance.cut) {
+        // Heard over continuous sound while the sentence may go on: listen for the rest.
+        this.stopSpeaking();
+        this.armCommand();
+        this.commandPrefix = wake.command;
+        if (wake.command) this.armPrefixTimer();
+        return;
+      }
       if (!wake.command) {
         this.stopSpeaking();
         this.armCommand();
@@ -340,10 +479,10 @@ export class VoiceController {
     await this.run(command);
   }
 
-  private async handleAnswer({ samples }: Utterance): Promise<void> {
+  private async handleAnswer(utterance: Utterance): Promise<void> {
     this.deps.overlay({ phase: 'transcribing' });
     this.transcribing = true;
-    const text = await this.deps.stt.transcribe(samples).catch(() => '');
+    const text = await this.transcribe(utterance).text.catch(() => '');
     this.transcribing = false;
     this.answer(parseYesNo(text) === true);
   }
@@ -426,8 +565,30 @@ export class VoiceController {
   }
 
   /** keepOverlay: a reply or error was just shown and hides itself after a moment. */
+  /**
+   * The command may already be complete ("Hey Aida, pause the music" at the end of a window): if
+   * no more speech starts soon, run what was heard.
+   */
+  private armPrefixTimer(): void {
+    this.clearPrefixTimer();
+    this.prefixTimer = setTimeout(() => {
+      this.prefixTimer = null;
+      const command = this.commandPrefix;
+      if (this.phase !== 'command' || !command) return;
+      this.commandPrefix = '';
+      this.queue = this.queue.then(() => this.run(command)).catch(() => {});
+    }, PREFIX_WAIT_MS);
+  }
+
+  private clearPrefixTimer(): void {
+    if (this.prefixTimer) clearTimeout(this.prefixTimer);
+    this.prefixTimer = null;
+  }
+
   private toIdle(keepOverlay = false): void {
     this.phase = 'idle';
+    this.commandPrefix = '';
+    this.clearPrefixTimer();
     this.deps.duck?.(false);
     this.deps.setState(null);
     this.refresh();

@@ -12,6 +12,14 @@ import type { ToolResult } from '../tools/types';
 import type { Routine } from '@shared/settings';
 import { parseInstant } from './instant-parser';
 import { matchRoutine } from './routines';
+import {
+  GROUP_NAMES,
+  MORE_TOOLS,
+  isSelected,
+  moreToolsSpec,
+  requestedGroups,
+  selectGroups,
+} from './tool-selection';
 
 const SYSTEM_PROMPT = PrivacyGuard.constant(
   [
@@ -232,9 +240,20 @@ export class Assistant {
         )
       : SYSTEM_PROMPT;
 
+    // Only the tools this conversation is likely to need (plus a way to ask for more).
+    const groups = selectGroups(
+      conversation.messages.flatMap((m) => (m.role === 'user' ? [m.text] : [])),
+      conversation.messages.flatMap((m) =>
+        m.role === 'assistant' ? (m.toolCalls ?? []).map((c) => c.name) : [],
+      ),
+    );
+
     for (let step = 0; step < MAX_STEPS; step++) {
+      const missing = groups ? GROUP_NAMES.filter((g) => !groups.has(g)) : [];
+      const tools = registry.specs((name) => isSelected(name, groups));
+      if (missing.length > 0) tools.push(moreToolsSpec(missing));
       const response = await router.complete(
-        { system, messages: conversation.messages, tools: registry.specs() },
+        { system, messages: conversation.messages, tools },
         ctx.requestId,
         ctx.signal,
       );
@@ -250,6 +269,23 @@ export class Assistant {
 
       const results: { id: string; name: string; result: ToolResult }[] = [];
       for (const call of response.toolCalls) {
+        if (call.name === MORE_TOOLS) {
+          // Handled here, not by a tool: the next request carries the groups asked for.
+          const added = requestedGroups(call.args).filter((g) => !groups?.has(g));
+          for (const g of added) groups?.add(g);
+          results.push({
+            id: call.id,
+            name: call.name,
+            result: {
+              ok: added.length > 0,
+              speak: added.length
+                ? `Added tools for: ${added.join(', ')}.`
+                : 'No such tool group; use the tools you have.',
+              followUp: true,
+            },
+          });
+          continue;
+        }
         emit({
           type: 'status',
           requestId: ctx.requestId,

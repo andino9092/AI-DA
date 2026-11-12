@@ -261,7 +261,7 @@ namespace Aida
             pid = 14
         };
 
-        private static string Name(IMMDevice device)
+        internal static string Name(IMMDevice device)
         {
             IPropertyStore store;
             if (device.OpenPropertyStore(0, out store) != 0) return "";

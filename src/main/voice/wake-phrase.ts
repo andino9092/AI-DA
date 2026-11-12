@@ -18,9 +18,20 @@ const KNOWN_NAME = new RegExp(String.raw`^${NAMES}$`, 'i');
 /** Spellings Whisper produces for "Aida" that are too far from it for the fuzzy check. */
 const EXTRA_NAMES = new Set(['aiden', 'aidan', 'haida', 'hayda', 'heyda']);
 
+/** A greeting and the name after other words: "…and I said hey Aida, pause the music". */
+const INSIDE = new RegExp(
+  String.raw`(?:^|[\s,.!?;:-])((?:${GREETING}[\s,.!-]+)+(${NAMES}|[a-zà-ÿ]{3,6})\b[\s,.!?:;-]*)`,
+  'gi',
+);
+
 export interface WakeOptions {
   /** Accept close misspellings after a greeting ("Hey Aita") and run-together forms ("Hayda"). */
   fuzzy: boolean;
+  /**
+   * Also find "Hey Aida" after other words: over music or a TV, the transcript often starts with
+   * lyrics or dialogue. Only greeting + an exact spelling of the name counts there.
+   */
+  anywhere?: boolean;
 }
 
 export interface WakeMatch {
@@ -38,12 +49,21 @@ export function matchWakePhrase(
   if (greeted && isName(greeted[1]!, options.fuzzy)) match = greeted;
   if (!match && options.fuzzy) match = MERGED.exec(text);
   match ??= BARE_NAME.exec(text);
-  if (!match) return null;
-  const command = text
-    .slice(match[0].length)
+  if (match) return { command: after(text, match[0].length) };
+  if (!options.anywhere) return null;
+  for (const inside of text.matchAll(INSIDE)) {
+    if (!isName(inside[2]!, false)) continue;
+    const end = inside.index + inside[0].length;
+    return { command: after(text, end) };
+  }
+  return null;
+}
+
+function after(text: string, index: number): string {
+  return text
+    .slice(index)
     .trim()
     .replace(/^[,.!?:;-]+\s*/, '');
-  return { command };
 }
 
 function isName(word: string, fuzzy: boolean): boolean {

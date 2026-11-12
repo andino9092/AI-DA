@@ -14,6 +14,7 @@ export const paths = {
   duckedFile: () => join(app.getPath('userData'), 'ducked.json'),
   timersFile: () => join(app.getPath('userData'), 'timers.json'),
   memoryFile: () => join(app.getPath('userData'), 'memory.json'),
+  voiceprintFile: () => join(app.getPath('userData'), 'voiceprint.json'),
   logsDir: () => join(app.getPath('userData'), 'logs'),
   defaultModelsDir: () => join(app.getPath('userData'), 'models'),
 };

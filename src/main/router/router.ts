@@ -7,11 +7,16 @@ import {
   type ProviderErrorKind,
   type ProviderId,
 } from '../providers/llm/types';
+import type { ProviderSlot } from '@shared/llm';
 import type { QuotaTracker } from './quota';
 
 export interface RoutedProvider {
   provider: LlmProvider;
   dailyLimit: number;
+  /** Quota and cool-down bucket; defaults to the provider id. A backup model has its own. */
+  slot?: ProviderSlot;
+  /** Name used when explaining failures, e.g. "Gemini (backup)". */
+  label?: string;
 }
 
 export class NoProviderError extends Error {
@@ -40,15 +45,15 @@ const NAMES: Record<ProviderId, string> = { gemini: 'Gemini', groq: 'Groq' };
 type FailureKind = ProviderErrorKind | 'timeout' | 'quota';
 
 interface Failure {
-  provider: ProviderId;
+  slot: ProviderSlot;
+  label: string;
   kind: FailureKind;
   message: string;
 }
 
 /** Short, spoken-friendly reason per provider, e.g. "Gemini is busy right now". */
-export function explainFailures(failures: Failure[]): string {
-  const reasons = failures.map(({ provider, kind }) => {
-    const name = NAMES[provider];
+export function explainFailures(failures: Pick<Failure, 'label' | 'kind'>[]): string {
+  const reasons = failures.map(({ label: name, kind }) => {
     switch (kind) {
       case 'timeout':
         return `${name} took too long to answer`;
@@ -109,29 +114,38 @@ export class LlmRouter {
 
     const started = this.now();
     const failures: Failure[] = [];
-    const ready: LlmProvider[] = [];
-    const busy: LlmProvider[] = [];
-    for (const { provider, dailyLimit } of candidates) {
-      const cooling = this.quota.coolingReason(provider.id);
-      if (this.quota.used(provider.id) >= dailyLimit)
-        failures.push({ provider: provider.id, kind: 'quota', message: 'daily limit reached' });
-      else if (cooling === 'busy') busy.push(provider);
+    type Entry = { provider: LlmProvider; slot: ProviderSlot; label: string };
+    const ready: Entry[] = [];
+    const busy: Entry[] = [];
+    for (const routed of candidates) {
+      const entry: Entry = {
+        provider: routed.provider,
+        slot: routed.slot ?? routed.provider.id,
+        label: routed.label ?? NAMES[routed.provider.id],
+      };
+      const { slot, label } = entry;
+      const cooling = this.quota.coolingReason(slot);
+      if (this.quota.used(slot) >= routed.dailyLimit)
+        failures.push({ slot, label, kind: 'quota', message: 'daily limit reached' });
+      else if (cooling === 'busy') busy.push(entry);
       else if (cooling)
-        failures.push({
-          provider: provider.id,
-          kind: cooling,
-          message: `cooling down (${cooling})`,
-        });
-      else ready.push(provider);
+        failures.push({ slot, label, kind: cooling, message: `cooling down (${cooling})` });
+      else ready.push(entry);
     }
 
     // Busy providers go last: better a slow answer than none.
-    for (const provider of [...ready, ...busy]) {
+    const order = [...ready, ...busy];
+    /** Providers whose key was just rejected: their other models would be rejected too. */
+    const rejected = new Set<ProviderId>();
+    for (const [index, { provider, slot, label }] of order.entries()) {
+      if (rejected.has(provider.id)) continue;
+      // A backup model of the same provider is next in line: it answers faster than a retry.
+      const backupNext = order[index + 1]?.provider.id === provider.id;
       for (let attempt = 1; attempt <= 2; attempt++) {
         if (this.now() - started > TOTAL_BUDGET_MS) break;
         try {
-          const response = await this.attempt(provider, request, requestId, signal);
-          this.quota.clear(provider.id);
+          const response = await this.attempt(provider, label, slot, request, requestId, signal);
+          this.quota.clear(slot);
           this.health?.reached();
           return { ...response, provider: provider.id };
         } catch (err) {
@@ -139,22 +153,24 @@ export class LlmRouter {
           if (err.kind === 'aborted') throw err;
           const timedOut = err.message.endsWith('(timed out)');
           failures.push({
-            provider: provider.id,
+            slot,
+            label,
             kind: timedOut ? 'timeout' : err.kind,
             message: err.message,
           });
           if (err.kind === 'rate_limit')
-            this.quota.coolDown(
-              provider.id,
-              err.retryAfterMs ?? DEFAULT_COOL_DOWN_MS,
-              'rate_limit',
-            );
-          if (err.kind === 'auth') this.quota.coolDown(provider.id, AUTH_COOL_DOWN_MS, 'auth');
-          if (err.kind === 'unavailable')
-            this.quota.coolDown(provider.id, BUSY_COOL_DOWN_MS, 'busy');
+            this.quota.coolDown(slot, err.retryAfterMs ?? DEFAULT_COOL_DOWN_MS, 'rate_limit');
+          // A rejected key is rejected for every model of that provider.
+          if (err.kind === 'auth') {
+            rejected.add(provider.id);
+            for (const other of order)
+              if (other.provider.id === provider.id)
+                this.quota.coolDown(other.slot, AUTH_COOL_DOWN_MS, 'auth');
+          }
+          if (err.kind === 'unavailable') this.quota.coolDown(slot, BUSY_COOL_DOWN_MS, 'busy');
           // "Overloaded, try again" answers come back fast; a quick retry often gets through.
           const overloaded = err.kind === 'unavailable' && !timedOut && err.status === 503;
-          if (!overloaded || attempt === 2) break;
+          if (!overloaded || attempt === 2 || backupNext) break;
           await this.sleep(RETRY_DELAY_MS);
         }
       }
@@ -164,15 +180,17 @@ export class LlmRouter {
     if (tried.length > 0 && tried.every((f) => f.kind === 'unavailable' || f.kind === 'timeout'))
       this.health?.unreachable();
     // One line per provider in the message (the last failure is the one that counts).
-    const last = new Map(failures.map((f) => [f.provider, f]));
+    const last = new Map(failures.map((f) => [f.slot, f]));
     throw new NoProviderError(
       explainFailures([...last.values()]),
-      failures.map((f) => `${f.provider}: ${f.message}`).join(' | '),
+      failures.map((f) => `${f.slot}: ${f.message}`).join(' | '),
     );
   }
 
   private async attempt(
     provider: LlmProvider,
+    label: string,
+    slot: ProviderSlot,
     request: LlmRequest,
     requestId: string,
     signal: AbortSignal,
@@ -189,14 +207,14 @@ export class LlmRouter {
       ),
       tools: request.tools.map((t) => t.name),
     });
-    this.quota.record(provider.id);
+    this.quota.record(slot);
     const timeout = AbortSignal.timeout(this.options.attemptTimeoutMs ?? ATTEMPT_TIMEOUT_MS);
     try {
       return await provider.complete(request, AbortSignal.any([signal, timeout]));
     } catch (err) {
       // Our time limit, not the user cancelling: treat it like "no answer".
       if (err instanceof ProviderError && err.kind === 'aborted' && !signal.aborted)
-        throw new ProviderError('unavailable', `${NAMES[provider.id]}: no answer (timed out)`);
+        throw new ProviderError('unavailable', `${label}: no answer (timed out)`);
       throw err;
     }
   }

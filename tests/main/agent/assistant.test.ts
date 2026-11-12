@@ -281,6 +281,41 @@ describe('Assistant: offline', () => {
   });
 });
 
+describe('Assistant: tool selection', () => {
+  it('sends only the tools a request needs, and more when the model asks', async () => {
+    const gemini = new FakeProvider('gemini', [
+      // The request looked like it was about windows, but it needs the clock.
+      { text: '', toolCalls: [{ id: 'm1', name: 'more_tools', args: { groups: ['time'] } }] },
+      { text: '', toolCalls: [{ id: 'c1', name: 'get_time', args: {} }] },
+    ]);
+    const t = setup({ providers: [gemini] });
+    const reply = await t.run('bring up the window thing and tell me how late it is');
+    expect(reply).toMatch(/^It's /);
+    const first = gemini.requests[0]!.tools.map((s) => s.name);
+    expect(first).toContain('window_action');
+    expect(first).toContain('more_tools');
+    expect(first).not.toContain('get_time');
+    expect(first).not.toContain('set_volume');
+    const second = gemini.requests[1]!.tools.map((s) => s.name);
+    expect(second).toContain('get_time');
+    // The model saw a result for its more_tools call.
+    expect(gemini.requests[1]!.messages.at(-1)).toMatchObject({
+      role: 'tool',
+      results: [{ name: 'more_tools' }],
+    });
+  });
+
+  it('sends every tool when the request matches no group', async () => {
+    const gemini = new FakeProvider('gemini', [{ text: 'Paris.', toolCalls: [] }]);
+    const t = setup({ providers: [gemini] });
+    await t.run('what is the capital of France');
+    const names = gemini.requests[0]!.tools.map((s) => s.name);
+    expect(names).toContain('set_volume');
+    expect(names).toContain('get_time');
+    expect(names).not.toContain('more_tools');
+  });
+});
+
 describe('Assistant: routines and memory', () => {
   it("runs a routine's commands in order and answers once", async () => {
     const gemini = new FakeProvider('gemini', []);

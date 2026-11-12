@@ -1,10 +1,12 @@
+import type { TtsRequest, TtsResponse } from './tts-protocol';
+
 /**
  * off: microphone closed · wake: always listening for "Hey Aida" · command: the next thing
  * said is a command (after the wake phrase alone, push-to-talk, or a follow-up question).
  */
 export type ListenMode = 'off' | 'wake' | 'command';
 
-export type Chime = 'listen' | 'done' | 'error' | 'alarm';
+export type Chime = 'listen' | 'done' | 'error' | 'alarm' | 'notify';
 
 export type WakeSensitivity = 'low' | 'normal' | 'high';
 
@@ -13,6 +15,16 @@ export const VAD_THRESHOLDS: Record<WakeSensitivity, { positive: number; negativ
   low: { positive: 0.6, negative: 0.45 },
   normal: { positive: 0.5, negative: 0.35 },
   high: { positive: 0.35, negative: 0.2 },
+};
+
+/**
+ * How closely "Hey Aida" must match the owner's voiceprint (cosine similarity, 0–1). The owner
+ * typically scores 0.6–0.9; other voices score well below.
+ */
+export const VOICE_MATCH_THRESHOLDS: Record<WakeSensitivity, number> = {
+  low: 0.55,
+  normal: 0.45,
+  high: 0.38,
 };
 
 /** Main process → hidden audio window. */
@@ -26,12 +38,21 @@ export type AudioCommand =
       meter: boolean;
       /** Push-to-talk is held: pauses don't end the command; releasing the key does. */
       hold: boolean;
+      /**
+       * browser: open the mic here (Chromium only removes our own playback). system: the mic
+       * arrives as mic-audio from Windows' echo canceller, with all PC sound removed.
+       */
+      source: 'browser' | 'system';
     }
+  /** Echo-cancelled microphone audio (source "system"): 16 kHz mono, whole 512-sample frames. */
+  | { type: 'mic-audio'; samples: Float32Array }
   | { type: 'flush' }
   | { type: 'play'; id: string; samples: Float32Array; sampleRate: number }
   | { type: 'end-of-speech'; id: string }
   | { type: 'stop-playback' }
-  | { type: 'chime'; chime: Chime };
+  | { type: 'chime'; chime: Chime }
+  /** For the graphics-card voice engine running in the audio window. */
+  | { type: 'tts'; request: TtsRequest };
 
 /** Hidden audio window → main process. */
 export type AudioEvent =
@@ -43,12 +64,22 @@ export type AudioEvent =
   | { type: 'no-speech' }
   | { type: 'level'; rms: number }
   | { type: 'playback-finished'; id: string }
-  | { type: 'error'; message: string };
+  | { type: 'error'; message: string }
+  /** From the graphics-card voice engine. */
+  | { type: 'tts'; response: TtsResponse };
 
 export interface Utterance {
   mode: ListenMode;
   /** 16 kHz mono float samples. */
   samples: Float32Array;
+  /** Which stretch of speech this came from (counts up). */
+  segment?: number;
+  /** Sent during a pause so it can be transcribed early; the final one may reuse it. */
+  tentative?: boolean;
+  /** Same audio as this segment's tentative utterance: reuse its transcript. */
+  reuse?: boolean;
+  /** Cut out of continuous sound (music, TV); the speech carries on. */
+  cut?: boolean;
 }
 
 /**
@@ -62,8 +93,32 @@ export interface HeardEvent {
   accepted: boolean;
   /** Loudest moment, in dBFS. Below about -30 is quiet. */
   peakDb: number;
+  /** How much it sounded like your recorded voice (0–1), when voice recognition is on. */
+  voiceMatch?: number;
+  /** Heard "Hey Aida", but not in your voice. */
+  notYourVoice?: boolean;
   seconds: number;
 }
+
+/** Settings → "Only respond to my voice". */
+export interface VoiceIdStatus {
+  /** The voice-recognition model is downloaded. */
+  modelReady: boolean;
+  /** A voiceprint is saved. */
+  enrolled: boolean;
+  /** Samples recorded so far in the current recording session. */
+  recorded: number;
+  /** Samples a session records. */
+  needed: number;
+  /** Samples in the saved voiceprint. */
+  saved: number;
+  /** The saved voiceprint was made by an older version: recording again matches better. */
+  outdated: boolean;
+}
+
+export type VoiceIdResult =
+  | { ok: true; status: VoiceIdStatus; consistency?: number }
+  | { ok: false; error: string; status: VoiceIdStatus };
 
 /** Main process → Settings window while the mic check is open. */
 export type MonitorEvent = { type: 'level'; rms: number } | { type: 'heard'; heard: HeardEvent };

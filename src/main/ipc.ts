@@ -7,12 +7,20 @@ import {
   type WebContents,
 } from 'electron';
 import { z } from 'zod';
-import { IPC, type AppInfo, type FindPlaceResult, type SaveSecretResult } from '@shared/ipc';
+import {
+  IPC,
+  type AppInfo,
+  type FindPlaceResult,
+  type SaveSecretResult,
+  type SetGoogleClientResult,
+} from '@shared/ipc';
 import type { SpotifyConnectResult, SpotifyStatus } from '@shared/spotify';
+import type { GoogleConnectResult, NotificationsSnapshot } from '@shared/notifications';
 import type { MemorySnapshot } from '@shared/memory';
 import type { KeyTestResult, ProviderUsage } from '@shared/llm';
 import type { AddSensitiveValueResult } from '@shared/privacy';
 import type { ModelStatus } from '@shared/models';
+import type { VoiceIdResult, VoiceIdStatus } from '@shared/voice';
 import { settingsPatchSchema } from '@shared/settings';
 import type { SettingsStore } from './settings/store';
 import type { SecretVault } from './secrets/vault';
@@ -52,11 +60,26 @@ interface Deps {
     connect(): Promise<SpotifyConnectResult>;
     disconnect(): Promise<SpotifyStatus>;
   };
+  notifications: {
+    snapshot(): Promise<NotificationsSnapshot>;
+    setGoogleClient(clientId: string, clientSecret: string): Promise<SetGoogleClientResult>;
+    clearGoogleClient(): Promise<NotificationsSnapshot>;
+    connect(): Promise<GoogleConnectResult>;
+    disconnect(): Promise<NotificationsSnapshot>;
+    test(): Promise<NotificationsSnapshot>;
+    unmute(): Promise<NotificationsSnapshot>;
+    onChanged(listener: () => void): void;
+  };
   voice: {
     vadModel(): Promise<Uint8Array>;
     isAudioWindow(webContentsId: number): boolean;
     test(): Promise<{ ok: boolean; error?: string }>;
     setMonitor(target: WebContents | null): void;
+    idStatus(): VoiceIdStatus;
+    idRecord(add: boolean): Promise<VoiceIdResult>;
+    idSave(): VoiceIdResult;
+    idCancel(): VoiceIdStatus;
+    idClear(): VoiceIdStatus;
   };
 }
 
@@ -98,6 +121,7 @@ export function registerIpc({
   weather,
   memory,
   spotify,
+  notifications,
   voice,
 }: Deps): void {
   handle(IPC.settingsGet, () => settings.get());
@@ -188,12 +212,37 @@ export function registerIpc({
   handle(IPC.spotifyConnect, () => spotify.connect());
   handle(IPC.spotifyDisconnect, () => spotify.disconnect());
 
+  handle(IPC.notificationsSnapshot, () => notifications.snapshot());
+  handle(IPC.notificationsSetClient, (_e, clientId, clientSecret) =>
+    notifications.setGoogleClient(
+      z.string().trim().max(200).parse(clientId),
+      z.string().trim().max(200).parse(clientSecret),
+    ),
+  );
+  handle(IPC.notificationsClearClient, () => notifications.clearGoogleClient());
+  handle(IPC.notificationsConnect, () => notifications.connect());
+  handle(IPC.notificationsDisconnect, () => notifications.disconnect());
+  handle(IPC.notificationsTest, () => notifications.test());
+  handle(IPC.notificationsUnmute, () => notifications.unmute());
+  // Settings refreshes the list when anything changes (new email, read out, error).
+  notifications.onChanged(() => {
+    void notifications.snapshot().then((snapshot) => {
+      for (const win of BrowserWindow.getAllWindows())
+        win.webContents.send(IPC.notificationsChanged, snapshot);
+    });
+  });
+
   handle(IPC.voiceVadModel, (event) => {
     if (!voice.isAudioWindow(event.sender.id))
       throw new Error('Only the audio window loads the voice detector.');
     return voice.vadModel();
   });
   handle(IPC.voiceTest, () => voice.test());
+  handle(IPC.voiceIdStatus, () => voice.idStatus());
+  handle(IPC.voiceIdRecord, (_e, add) => voice.idRecord(z.boolean().parse(add)));
+  handle(IPC.voiceIdSave, () => voice.idSave());
+  handle(IPC.voiceIdCancel, () => voice.idCancel());
+  handle(IPC.voiceIdClear, () => voice.idClear());
   handle(IPC.voiceMonitor, (event, enabled) =>
     voice.setMonitor(z.boolean().parse(enabled) ? event.sender : null),
   );

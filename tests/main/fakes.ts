@@ -17,6 +17,7 @@ import {
   type VolumeState,
   type WindowAction,
   type WindowInfo,
+  type Presence,
   type WindowsBridge,
 } from '../../src/main/native/win-host';
 import type {
@@ -187,6 +188,10 @@ export class FakeWindows implements WindowsBridge {
   }
   pressHotkey(name: string, down: boolean) {
     this.hotkeyListener?.(name, down);
+  }
+  presenceState: Presence = { notificationState: 5, idleSeconds: 0, micApps: [] };
+  async presence() {
+    return { ...this.presenceState, micApps: [...this.presenceState.micApps] };
   }
 }
 

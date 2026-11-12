@@ -12,6 +12,8 @@ function hint(last: HeardEvent[]): string | null {
   const quiet = last.filter((h) => h.peakDb < QUIET_DB).length;
   if (quiet >= Math.ceil(last.length / 2))
     return 'Your voice is coming in quiet. Move closer, or raise the mic level in Windows Sound settings → Input. You can also set sensitivity to High.';
+  if (last.filter((h) => h.notYourVoice).length >= 2)
+    return "Aida heard “Hey Aida” but it didn't sound like your recorded voice. If something was playing, use “Add samples with sound playing” above; otherwise record your voice again from where you usually sit, or set sensitivity to High.";
   const missed = last.filter((h) => !h.accepted && h.mode === 'wake').length;
   if (missed >= 2)
     return 'Aida hears you but not the name. Pause briefly after “Hey Aida”, or try sensitivity High.';
@@ -103,6 +105,15 @@ export function MicCheck({ disabledReason }: { disabledReason: string | null }) 
                   <span className="min-w-0 flex-1 truncate">
                     {h.text ? `“${h.text}”` : <em className="text-zinc-400">(no words)</em>}
                   </span>
+                  {h.voiceMatch !== undefined && (
+                    <span
+                      className={`shrink-0 tabular-nums ${h.notYourVoice ? 'text-amber-600 dark:text-amber-400' : 'text-zinc-500 dark:text-zinc-400'}`}
+                      title="How much it sounded like your recorded voice (0–100)"
+                    >
+                      {h.notYourVoice ? 'not you · ' : 'you · '}
+                      {Math.round(h.voiceMatch * 100)}
+                    </span>
+                  )}
                   <span
                     className={`shrink-0 tabular-nums ${h.peakDb < QUIET_DB ? 'text-amber-600 dark:text-amber-400' : 'text-zinc-500 dark:text-zinc-400'}`}
                   >

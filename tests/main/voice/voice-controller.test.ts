@@ -13,6 +13,7 @@ function setup(options: {
   wakeWord?: boolean;
   monitoring?: boolean;
   duck?: (on: boolean) => void;
+  speaker?: { enabled(): boolean; match(samples: Float32Array): Promise<number | null> };
 }) {
   const transcripts = [...options.transcripts];
   const commands: string[] = [];
@@ -23,8 +24,14 @@ function setup(options: {
   const heard: HeardEvent[] = [];
   let finishSpeech: (() => void) | null = null;
 
+  const sttCalls: (AbortSignal | undefined)[] = [];
   const controller = new VoiceController({
-    stt: { transcribe: async () => transcripts.shift() ?? '' },
+    stt: {
+      transcribe: async (_samples, signal) => {
+        sttCalls.push(signal);
+        return transcripts.shift() ?? '';
+      },
+    },
     speak: async (text, onChunk) => {
       spoken.push(text);
       onChunk(new Float32Array(10), 24_000);
@@ -53,6 +60,7 @@ function setup(options: {
     canListen: () => options.canListen ?? true,
     canSpeak: () => true,
     duck: options.duck,
+    speaker: options.speaker,
   });
 
   const say = async (mode: 'wake' | 'command' = 'wake') => {
@@ -71,11 +79,37 @@ function setup(options: {
     spoken,
     heard,
     modes,
+    sttCalls,
     finish: () => finishSpeech?.(),
   };
 }
 
 describe('VoiceController', () => {
+  it('reads a notification only while idle, after its soft chime', async () => {
+    vi.useFakeTimers();
+    try {
+      const t = setup({ transcripts: [] });
+      expect(t.controller.free).toBe(true);
+      expect(t.controller.notify('Email from Sam.')).toBe(true);
+      expect(t.audio).toContainEqual({ type: 'chime', chime: 'notify' });
+      // Busy talking: the next one has to wait.
+      expect(t.controller.free).toBe(false);
+      expect(t.controller.notify('Another one.')).toBe(false);
+      await vi.advanceTimersByTimeAsync(600);
+      expect(t.spoken).toEqual(['Email from Sam.']);
+      t.finish();
+      expect(t.controller.free).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("doesn't read notifications aloud with spoken replies off", () => {
+    const t = setup({ transcripts: [], speak: false });
+    expect(t.controller.notify('Email from Sam.')).toBe(false);
+    expect(t.audio).toEqual([]);
+  });
+
   it('runs "Hey Aida, <command>" in one go and speaks the reply', async () => {
     const t = setup({ transcripts: ['Hey Aida, pause the music.'], reply: 'Okay.' });
     await t.say();
@@ -282,5 +316,163 @@ describe('VoiceController', () => {
     expect(parseYesNo("No, don't.")).toBe(false);
     expect(parseYesNo('Cancel')).toBe(false);
     expect(parseYesNo('Maybe later')).toBeNull();
+  });
+});
+
+describe('VoiceController: faster replies and loud rooms', () => {
+  it('reuses the transcript started during the pause', async () => {
+    const t = setup({ transcripts: ['Hey Aida, pause the music.'], speak: false });
+    t.controller.onUtterance({ mode: 'wake', samples, segment: 3, tentative: true });
+    t.controller.onUtterance({ mode: 'wake', samples, segment: 3, reuse: true });
+    await t.controller.idle();
+    expect(t.sttCalls).toHaveLength(1);
+    expect(t.commands).toEqual(['pause the music.']);
+  });
+
+  it('drops the early transcript when the speaker went on', async () => {
+    const t = setup({
+      transcripts: ['Hey Aida, pause', 'Hey Aida, pause the music and turn it up'],
+      speak: false,
+    });
+    t.controller.onUtterance({ mode: 'wake', samples, segment: 4, tentative: true });
+    t.controller.onUtterance({ mode: 'wake', samples, segment: 4 });
+    await t.controller.idle();
+    expect(t.sttCalls).toHaveLength(2);
+    expect(t.sttCalls[0]!.aborted).toBe(true);
+    expect(t.commands).toEqual(['pause the music and turn it up']);
+  });
+
+  it('hears "Hey Aida" after song lyrics', async () => {
+    const t = setup({
+      transcripts: ['We will, we will rock you. Hey Aida, skip this song.'],
+      speak: false,
+    });
+    await t.say();
+    expect(t.commands).toEqual(['skip this song.']);
+  });
+
+  it('listens for the rest of a sentence cut from continuous sound', async () => {
+    const t = setup({
+      transcripts: ['rock you, rock you. Hey Aida, turn the', 'music down'],
+      speak: false,
+    });
+    t.controller.onUtterance({ mode: 'wake', samples, segment: 7, cut: true });
+    await t.controller.idle();
+    expect(t.modes().at(-1)).toBe('command');
+    t.controller.onAudioEvent({ type: 'speech-start', mode: 'command' });
+    await t.say('command');
+    expect(t.commands).toEqual(['turn the music down']);
+  });
+
+  it('runs a complete command from a cut window when nothing more is said', async () => {
+    vi.useFakeTimers();
+    try {
+      const t = setup({ transcripts: ['la la la. Hey Aida, pause the music.'], speak: false });
+      t.controller.onUtterance({ mode: 'wake', samples, segment: 9, cut: true });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(t.commands).toEqual([]);
+      await vi.advanceTimersByTimeAsync(1600);
+      await t.controller.idle();
+      expect(t.commands).toEqual(['pause the music.']);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('ignores cut windows that are only music', async () => {
+    const t = setup({ transcripts: ['we will, we will rock you'] });
+    t.controller.onUtterance({ mode: 'wake', samples, segment: 2, cut: true });
+    await t.controller.idle();
+    expect(t.modes()).not.toContain('command');
+    expect(t.commands).toEqual([]);
+  });
+});
+
+describe('VoiceController: only my voice', () => {
+  const speaker = (score: number | null, enabled = true) => {
+    const calls: number[] = [];
+    return {
+      calls,
+      enabled: () => enabled,
+      match: async (s: Float32Array) => {
+        calls.push(s.length);
+        return score;
+      },
+    };
+  };
+
+  it('ignores "Hey Aida" in someone else’s voice', async () => {
+    const other = speaker(0.2);
+    const t = setup({
+      transcripts: ['Hey Aida, pause the music.'],
+      speaker: other,
+      monitoring: true,
+    });
+    await t.say();
+    expect(t.commands).toEqual([]);
+    expect(t.heard[0]).toMatchObject({ accepted: false, voiceMatch: 0.2, notYourVoice: true });
+  });
+
+  it('answers the owner, and speech too short to judge', async () => {
+    for (const score of [0.8, null]) {
+      const t = setup({
+        transcripts: ['Hey Aida, pause the music.'],
+        speaker: speaker(score),
+        speak: false,
+      });
+      await t.say();
+      expect(t.commands).toEqual(['pause the music.']);
+    }
+  });
+
+  it('only checks the voice of wake phrases, and not when it is off', async () => {
+    const owner = speaker(0.1);
+    const t = setup({ transcripts: ['Hey Aida.', 'open spotify'], speaker: owner, speak: false });
+    await t.say();
+    // A low score blocked the bare "Hey Aida" too.
+    expect(t.modes()).not.toContain('command');
+    const off = speaker(0.1, false);
+    const t2 = setup({ transcripts: ['Hey Aida.', 'open spotify'], speaker: off, speak: false });
+    await t2.say();
+    await t2.say('command');
+    expect(t2.commands).toEqual(['open spotify']);
+    expect(off.calls).toEqual([]);
+    // Push-to-talk and follow-ups (command mode) are never checked.
+    const pt = speaker(0.1);
+    const t3 = setup({ transcripts: ['volume 20'], speaker: pt, speak: false });
+    await t3.say('command');
+    expect(t3.commands).toEqual(['volume 20']);
+    expect(pt.calls).toEqual([]);
+  });
+
+  it('checks the voice during the pause, alongside the transcript', async () => {
+    const owner = speaker(0.9);
+    const t = setup({ transcripts: ['Hey Aida, pause the music.'], speaker: owner, speak: false });
+    t.controller.onUtterance({ mode: 'wake', samples, segment: 1, tentative: true });
+    t.controller.onUtterance({ mode: 'wake', samples, segment: 1, reuse: true });
+    await t.controller.idle();
+    expect(owner.calls).toHaveLength(1);
+    expect(t.commands).toEqual(['pause the music.']);
+  });
+});
+
+describe('VoiceController: recording a voice sample', () => {
+  it('returns the next utterance without transcribing or running it', async () => {
+    const t = setup({ transcripts: ['should not be used'] });
+    const recording = t.controller.recordSample();
+    expect(t.modes().at(-1)).toBe('command');
+    const heardSample = new Float32Array(32_000);
+    t.controller.onUtterance({ mode: 'command', samples: heardSample });
+    expect(await recording).toBe(heardSample);
+    expect(t.sttCalls).toHaveLength(0);
+    expect(t.commands).toEqual([]);
+    expect(t.modes().at(-1)).toBe('wake');
+  });
+
+  it('gives up when nothing is said', async () => {
+    const t = setup({ transcripts: [] });
+    const recording = t.controller.recordSample();
+    t.controller.onAudioEvent({ type: 'command-timeout' });
+    expect(await recording).toBeNull();
   });
 });

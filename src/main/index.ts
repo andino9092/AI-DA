@@ -31,13 +31,15 @@ import { ToolExecutor } from './safety/executor';
 import { ConfirmBroker } from './safety/confirm-broker';
 import { QuotaTracker } from './router/quota';
 import { LlmRouter, testProvider } from './router/router';
-import { buildProvider, createProviderSource } from './providers/llm/factory';
+import { buildProvider, createProviderSource, providerSlots } from './providers/llm/factory';
 import { Assistant } from './agent/assistant';
 import { ModelManager } from './models/model-manager';
 import { VoiceService } from './voice/voice-service';
 import { Ducker } from './voice/ducker';
 import { join, parse as parsePath } from 'node:path';
 import { fileTools } from './tools/files/tools';
+import { registerModelScheme, serveModels } from './app/model-protocol';
+import { VoiceprintStore } from './voice/speaker-id';
 import { hostname } from 'node:os';
 import { WeatherClient, weatherTools, type TemperatureUnit } from './tools/info/weather';
 import { unitTools } from './tools/info/units';
@@ -47,12 +49,20 @@ import { MemoryStore, memoryTools } from './memory/memory';
 import { routineTools } from './agent/routines';
 import { detectSensitive } from './privacy/detectors';
 import type { Routine } from '@shared/settings';
+import { GOOGLE_CLIENT_ID, type NotificationsSnapshot } from '@shared/notifications';
+import { GoogleClient } from './google/client';
+import { GmailWatcher } from './notifications/gmail';
+import { CalendarWatcher } from './notifications/calendar';
+import { NotificationCenter } from './notifications/center';
+import { NotificationService } from './notifications/service';
+import { notificationTools } from './tools/info/notifications';
 
 // One AI-DA per user. A second launch just brings up settings in the running instance.
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
   app.on('second-instance', () => openSettingsWindow());
+  registerModelScheme();
   app.setAppUserModelId('com.andino.aida');
 
   // A tray app has no main window: closing settings must not quit.
@@ -71,6 +81,8 @@ function start(): void {
   const vault = new SecretVault(paths.vaultFile(), safeStorage);
   const sensitive = new SensitiveValueStore(paths.sensitiveValuesFile(), safeStorage);
   const models = new ModelManager(() => settings.get().modelsDir ?? paths.defaultModelsDir());
+  // Local model files for the graphics-card voice engine (nothing else is served).
+  serveModels(() => models.path(''));
 
   // Privacy first: everything that leaves the PC goes through this guard.
   const guard = new PrivacyGuard(() => ({
@@ -123,6 +135,69 @@ function start(): void {
     openBrowser: (url) => shell.openExternal(url),
   });
 
+  // Notifications: the user's own Google sign-in app, read-only. Gmail gives only headers (sender,
+  // subject), never message text. Read out locally at a good moment; nothing goes to the AI unless
+  // the user asks about it.
+  const google = new GoogleClient({
+    clientId: () => settings.get().google.clientId,
+    clientSecret: () => vault.get('google-client-secret'),
+    loadRefreshToken: () => vault.get('google'),
+    saveRefreshToken: (token) => (token ? vault.set('google', token) : vault.remove('google')),
+    openBrowser: (url) => shell.openExternal(url),
+  });
+  const gmail = new GmailWatcher({
+    google,
+    filter: () => {
+      const filter = settings.get().notifications.gmail;
+      return filter === 'off' ? 'primary' : filter;
+    },
+    // Subjects with card numbers, IDs or the user's own sensitive values aren't read out.
+    isSensitive: (text) =>
+      detectSensitive(text, { maskContactInfo: false, customValues: sensitive.values() }).length >
+      0,
+  });
+  const calendar = new CalendarWatcher({ google });
+  const notificationListeners = new Set<() => void>();
+  const notificationsChanged = () => {
+    for (const listener of notificationListeners) listener();
+  };
+  // AI-DA's own microphone use (its audio window and echo canceller) isn't a call.
+  const ownMicApps = [process.execPath, paths.resources('native', 'aida-win.exe')].map((p) =>
+    p.replace(/\\/g, '#').toLowerCase(),
+  );
+  const center = new NotificationCenter({
+    enabled: () => settings.get().notifications.enabled,
+    holdWhenBusy: () => settings.get().notifications.holdWhenBusy,
+    presence: () => win.presence(),
+    voice: {
+      get free() {
+        return voice.free;
+      },
+      get canTalk() {
+        return voice.canTalk;
+      },
+      notify: (text) => voice.notify(text),
+    },
+    show: (text) => {
+      if (Notification.isSupported()) new Notification({ title: 'AI-DA', body: text }).show();
+    },
+    isOwnMicApp: (app) => ownMicApps.includes(app.toLowerCase()),
+    changed: notificationsChanged,
+  });
+  const notifications = new NotificationService({
+    google,
+    gmail,
+    calendar,
+    center,
+    settings: () => settings.get().notifications,
+    granted: () => google.grantedScopes,
+    changed: notificationsChanged,
+  });
+  const notificationsSnapshot = async (): Promise<NotificationsSnapshot> => ({
+    google: await google.status(),
+    ...notifications.snapshotParts(),
+  });
+
   // What the user asked Aida to remember. Anything the Privacy Guard would mask is refused.
   const memory = new MemoryStore(
     paths.memoryFile(),
@@ -158,6 +233,19 @@ function start(): void {
         if (!found || !/^spotify\b/i.test(found.name)) return false;
         launcher.launchApp(found.appId);
         return true;
+      },
+    }),
+    ...notificationTools({
+      center,
+      gmail,
+      calendar,
+      google: () => {
+        const granted = google.grantedScopes;
+        return {
+          connected: google.connected(),
+          gmail: granted?.gmail !== false,
+          calendar: granted?.calendar !== false,
+        };
       },
     }),
     ...fileTools({
@@ -275,6 +363,8 @@ function start(): void {
   void ducker.recover();
 
   const voice = new VoiceService({
+    helperExe: paths.resources('native', 'aida-win.exe'),
+    voiceprints: new VoiceprintStore(paths.voiceprintFile(), safeStorage),
     duck: (on) => void ducker.set(on),
     settings: () => settings.get(),
     models,
@@ -406,22 +496,28 @@ function start(): void {
     testKey: async (id) => {
       const key = vault.get(id);
       if (!key) return { ok: false, message: 'No key saved yet.' };
-      return testProvider(
-        buildProvider(id, key, settings.get().llm[id].model),
-        {
-          system: PrivacyGuard.constant('Reply with the single word OK.'),
-          messages: [{ role: 'user', text: PrivacyGuard.constant('Say OK.') }],
-          tools: [],
-        },
-        outboundLog,
-      );
+      const request = {
+        system: PrivacyGuard.constant('Reply with the single word OK.'),
+        messages: [{ role: 'user' as const, text: PrivacyGuard.constant('Say OK.') }],
+        tools: [],
+      };
+      // Every model this key is used with (Gemini's main and backup models).
+      const slots = providerSlots(settings.get().llm).filter((s) => s.id === id);
+      const results = [];
+      for (const { model, label } of slots) {
+        const result = await testProvider(buildProvider(id, key, model), request, outboundLog);
+        results.push({ ...result, label });
+      }
+      if (results.length === 1) return results[0]!;
+      return {
+        ok: results[0]!.ok,
+        message: results.map((r) => `${r.label}: ${r.message}`).join(' '),
+      };
     },
-    usage: () => {
-      const { llm } = settings.get();
-      return (['gemini', 'groq'] as const).map((id) =>
-        quota.usage(id, llm[id].dailyLimit, vault.get(id) !== null),
-      );
-    },
+    usage: () =>
+      providerSlots(settings.get().llm).map(({ slot, id, label, model, dailyLimit }) =>
+        quota.usage(slot, { label, model, limit: dailyLimit, configured: vault.get(id) !== null }),
+      ),
     palette: {
       submit: async (text) => {
         await runCommand(text, 'palette', palette.activeWindowHandle);
@@ -469,11 +565,77 @@ function start(): void {
         return spotify.status();
       },
     },
+    notifications: {
+      snapshot: notificationsSnapshot,
+      setGoogleClient: async (clientId, clientSecret) => {
+        if (!GOOGLE_CLIENT_ID.test(clientId))
+          return {
+            ok: false,
+            error:
+              'A Client ID ends in .apps.googleusercontent.com. Copy it from the client’s page.',
+          };
+        if (clientSecret.length < 10 || /\s/.test(clientSecret))
+          return {
+            ok: false,
+            error:
+              'That doesn’t look like a Client secret. Copy it from the same page (it usually starts with GOCSPX-).',
+          };
+        // A different sign-in app means signing in again.
+        await google.disconnect();
+        vault.set('google-client-secret', clientSecret);
+        settings.update({ google: { clientId } });
+        return { ok: true, snapshot: await notificationsSnapshot() };
+      },
+      clearGoogleClient: async () => {
+        await google.disconnect();
+        vault.remove('google-client-secret');
+        settings.update({ google: { clientId: null } });
+        center.clear();
+        notifications.reset();
+        return notificationsSnapshot();
+      },
+      connect: async () => {
+        const result = await google.connect();
+        if (result.ok) notifications.reset();
+        return result;
+      },
+      disconnect: async () => {
+        await google.disconnect();
+        center.clear();
+        notifications.reset();
+        return notificationsSnapshot();
+      },
+      test: async () => {
+        const now = Date.now();
+        center.add([
+          {
+            id: `system:test:${now}`,
+            source: 'system',
+            at: now,
+            title: 'This is how notifications sound',
+            detail: '',
+            state: 'pending',
+          },
+        ]);
+        void center.tick();
+        return notificationsSnapshot();
+      },
+      unmute: () => {
+        center.mute(null);
+        return notificationsSnapshot();
+      },
+      onChanged: (listener) => notificationListeners.add(listener),
+    },
     voice: {
       vadModel: () => voice.vadModel(),
       isAudioWindow: (id) => id === voice.audio.webContentsId,
       test: () => voice.test(),
       setMonitor: (target) => voice.setMonitor(target),
+      idStatus: () => voice.voiceIdStatus(),
+      idRecord: (add) => voice.recordVoiceSample(add),
+      idSave: () => voice.saveVoiceprint(),
+      idCancel: () => voice.cancelVoiceEnrollment(),
+      idClear: () => voice.clearVoiceprint(),
     },
   });
 
@@ -481,6 +643,13 @@ function start(): void {
     if (next.launchAtLogin !== previous.launchAtLogin) applyLaunchAtLogin(next.launchAtLogin);
     if (JSON.stringify(next.shortcuts) !== JSON.stringify(previous.shortcuts)) registerShortcuts();
     voice.refresh();
+    if (
+      next.notifications.enabled !== previous.notifications.enabled &&
+      !next.notifications.enabled
+    )
+      center.clear();
+    if (JSON.stringify(next.notifications) !== JSON.stringify(previous.notifications))
+      notificationsChanged();
     tray.update({
       state: trayState(),
       microphoneMuted: next.microphoneMuted,
@@ -491,6 +660,7 @@ function start(): void {
 
   voice.start();
   timers.start();
+  notifications.start();
   connectivity.start();
 
   let restoredSound = false;
@@ -506,6 +676,7 @@ function start(): void {
     }
     updater.dispose();
     timers.dispose();
+    notifications.stop();
     connectivity.stop();
     globalShortcut.unregisterAll();
     confirmBroker.cancelAll();

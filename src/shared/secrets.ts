@@ -4,10 +4,10 @@ export const SECRET_NAMES = ['gemini', 'groq'] as const;
 export type SecretName = (typeof SECRET_NAMES)[number];
 
 /**
- * Sign-in tokens AI-DA saves for itself (Spotify). Encrypted like keys, but never listed, typed
- * or read back through IPC.
+ * Sign-in tokens AI-DA saves for itself (Spotify, Google, and the Google client secret). Encrypted
+ * like keys, but never listed, typed or read back through IPC.
  */
-export const TOKEN_NAMES = ['spotify'] as const;
+export const TOKEN_NAMES = ['spotify', 'google', 'google-client-secret'] as const;
 
 export type TokenName = (typeof TOKEN_NAMES)[number];
 

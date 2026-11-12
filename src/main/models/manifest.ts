@@ -21,11 +21,12 @@ export interface ModelSpec {
   readyCheck: string;
 }
 
-export type ModelId = 'vad' | 'whisper-runtime' | 'whisper-model' | 'kokoro';
+export type ModelId = 'vad' | 'whisper-runtime' | 'whisper-model' | 'kokoro' | 'speaker';
 
 const KOKORO_REV = '1939ad2a8e416c0acfeecc08a694d14ef25f2231';
 const KOKORO = `https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/resolve/${KOKORO_REV}`;
 const WHISPER_REV = '5359861c739e955e79d9a303bcbc70fb988958b1';
+const WESPEAKER_REV = 'f0c48c298fd835726c27956a5d617bad7115627e';
 
 export const MODELS: ModelSpec[] = [
   {
@@ -103,6 +104,21 @@ export const MODELS: ModelSpec[] = [
         path: 'kokoro/onnx/model.onnx',
         size: 325_532_232,
         sha256: '8fbea51ea711f2af382e88c833d9e288c6dc82ce5e98421ea61c058ce21a34cb',
+      },
+    ],
+  },
+  {
+    id: 'speaker',
+    label: 'Voice recognition',
+    purpose:
+      'Tells your voice from other voices and speakers (WeSpeaker ResNet34, CC BY 4.0), so only you can say “Hey Aida”.',
+    readyCheck: 'speaker/voxceleb_resnet34_LM.onnx',
+    files: [
+      {
+        url: `https://huggingface.co/Wespeaker/wespeaker-voxceleb-resnet34-LM/resolve/${WESPEAKER_REV}/voxceleb_resnet34_LM.onnx`,
+        path: 'speaker/voxceleb_resnet34_LM.onnx',
+        size: 26_530_309,
+        sha256: '7bb2f06e9df17cdf1ef14ee8a15ab08ed28e8d0ef5054ee135741560df2ec068',
       },
     ],
   },

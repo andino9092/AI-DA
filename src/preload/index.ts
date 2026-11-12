@@ -47,6 +47,11 @@ const api: AidaApi = {
     test: () => ipcRenderer.invoke(IPC.voiceTest),
     monitor: (enabled) => ipcRenderer.invoke(IPC.voiceMonitor, enabled),
     onMonitor: (listener) => subscribe(IPC.voiceMonitorEvent, listener),
+    idStatus: () => ipcRenderer.invoke(IPC.voiceIdStatus),
+    idRecord: (add) => ipcRenderer.invoke(IPC.voiceIdRecord, add === true),
+    idSave: () => ipcRenderer.invoke(IPC.voiceIdSave),
+    idCancel: () => ipcRenderer.invoke(IPC.voiceIdCancel),
+    idClear: () => ipcRenderer.invoke(IPC.voiceIdClear),
   },
   weather: {
     findPlace: (city) => ipcRenderer.invoke(IPC.weatherFindPlace, city),
@@ -61,6 +66,17 @@ const api: AidaApi = {
     status: () => ipcRenderer.invoke(IPC.spotifyStatus),
     connect: () => ipcRenderer.invoke(IPC.spotifyConnect),
     disconnect: () => ipcRenderer.invoke(IPC.spotifyDisconnect),
+  },
+  notifications: {
+    snapshot: () => ipcRenderer.invoke(IPC.notificationsSnapshot),
+    setGoogleClient: (clientId, clientSecret) =>
+      ipcRenderer.invoke(IPC.notificationsSetClient, clientId, clientSecret),
+    clearGoogleClient: () => ipcRenderer.invoke(IPC.notificationsClearClient),
+    connect: () => ipcRenderer.invoke(IPC.notificationsConnect),
+    disconnect: () => ipcRenderer.invoke(IPC.notificationsDisconnect),
+    test: () => ipcRenderer.invoke(IPC.notificationsTest),
+    unmute: () => ipcRenderer.invoke(IPC.notificationsUnmute),
+    onChanged: (listener) => subscribe(IPC.notificationsChanged, listener),
   },
   palette: {
     submit: (text) => ipcRenderer.invoke(IPC.paletteSubmit, text),
