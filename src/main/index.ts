@@ -27,6 +27,7 @@ import { timeTools } from './tools/info/time';
 import { TimerService, timerMessage, timerTools } from './tools/info/timers';
 import { ToolRegistry } from './tools/registry';
 import { JsonlLog } from './safety/action-log';
+import { Tracer, type Trace } from './trace/tracer';
 import { ToolExecutor } from './safety/executor';
 import { ConfirmBroker } from './safety/confirm-broker';
 import { QuotaTracker } from './router/quota';
@@ -269,6 +270,12 @@ function start(): void {
 
   const actionLog = new JsonlLog(paths.logsDir(), 'actions');
   const outboundLog = new JsonlLog(paths.logsDir(), 'outbound');
+  // How long each stage of a request took and what it cost: numbers and names only, no text.
+  const tracesLog = new JsonlLog(paths.logsDir(), 'traces');
+  const tracer = new Tracer((entry) => tracesLog.write(entry));
+  // Voice diagnostics (off unless switched on in Settings → Voice): what became of each thing
+  // the microphone picked up, in numbers only. Never what was said.
+  const voiceLog = new JsonlLog(paths.logsDir(), 'voice');
   const palette = new PaletteController(() => win.foregroundWindow());
   const confirmBroker = new ConfirmBroker(
     (event) => {
@@ -300,6 +307,7 @@ function start(): void {
     hasNetwork: () => connectivity.hasNetwork,
     routines: routines.list,
     memory,
+    tracer,
   });
 
   // Tray state: voice activity wins, then typed commands, then idle/muted.
@@ -323,6 +331,7 @@ function start(): void {
     text: string,
     source: 'palette' | 'voice',
     activeWindow: number | null,
+    trace?: Trace,
   ): Promise<string> => {
     const queuedIn = generation;
     const task = queue.then(async () => {
@@ -333,7 +342,12 @@ function start(): void {
       running++;
       tray.update({ state: trayState() });
       try {
-        return await assistant.handle(text, { source, activeWindow, signal: abort.signal });
+        return await assistant.handle(text, {
+          source,
+          activeWindow,
+          signal: abort.signal,
+          trace,
+        });
       } finally {
         if (current === abort) current = null;
         running--;
@@ -368,7 +382,11 @@ function start(): void {
     duck: (on) => void ducker.set(on),
     settings: () => settings.get(),
     models,
-    handleCommand: (text, activeWindow) => runCommand(text, 'voice', activeWindow),
+    handleCommand: (text, activeWindow, trace) => runCommand(text, 'voice', activeWindow, trace),
+    tracer,
+    diagnose: (diagnostic) => {
+      if (settings.get().voice.diagnostics) voiceLog.write({ type: 'heard', ...diagnostic });
+    },
     foregroundWindow: () => win.foregroundWindow(),
     setState: (state) => {
       voiceState = state;

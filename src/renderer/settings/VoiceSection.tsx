@@ -114,6 +114,12 @@ export function VoiceSection({
         checked={voice.duckOthers}
         onChange={(v) => setVoice({ duckOthers: v })}
       />
+      <Toggle
+        label="Record voice diagnostics"
+        hint="For finding out why “Hey Aida” or a command was missed. While on, everything the microphone picks up gets one line in a log on this PC: how long and how loud it was, whether it matched “Hey Aida” and your voice, and what Aida did. Never the words or the audio. That includes speech that wasn’t for Aida, so turn it off when you’re done."
+        checked={voice.diagnostics}
+        onChange={(v) => setVoice({ diagnostics: v })}
+      />
 
       <div className="flex items-center gap-3">
         <span className="w-24 shrink-0 text-sm">Microphone</span>

@@ -100,10 +100,19 @@ export class GeminiProvider implements LlmProvider {
         }),
       };
 
+      const counted = response.usageMetadata;
       return {
         text: stripThinking(text),
         toolCalls,
         raw: replay ? { provider: 'gemini', model: this.model, content: replay } : undefined,
+        usage:
+          counted?.promptTokenCount !== undefined
+            ? {
+                inputTokens: counted.promptTokenCount,
+                outputTokens:
+                  (counted.candidatesTokenCount ?? 0) + (counted.thoughtsTokenCount ?? 0),
+              }
+            : undefined,
       };
     } catch (err) {
       if (signal.aborted) throw new ProviderError('aborted', 'Cancelled.');

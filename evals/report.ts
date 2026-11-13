@@ -45,6 +45,8 @@ export function summarize(model: ModelResult) {
     categories,
     llmCalls: avg(withModel.map((r) => r.run.llmCalls)),
     requestChars: avg(withModel.map((r) => r.run.requestChars)),
+    inputTokens: avg(withModel.map((r) => r.run.inputTokens)),
+    outputTokens: avg(withModel.map((r) => r.run.outputTokens)),
     secondsPerCall: avg(withModel.map((r) => r.run.llmMs / r.run.llmCalls)) / 1000,
     toolsOffered: avg(withModel.map((r) => r.run.toolsOffered[0]?.length ?? 0)),
     moreTools: withModel.filter((r) => askedForMoreTools(r.run)).length,
@@ -65,7 +67,7 @@ export function renderReport(models: ModelResult[], startedAt: Date, notes: stri
 
   lines.push('## Summary', '');
   lines.push(
-    '| Model | Pass rate | Model calls per task | Request size (chars) | Seconds per call | Tools offered | Asked for more tools | Broken runs |',
+    '| Model | Pass rate | Model calls per task | Tokens in / out per task | Seconds per call | Tools offered | Asked for more tools | Broken runs |',
     '|---|---|---|---|---|---|---|---|',
   );
   for (const s of summaries) {
@@ -73,7 +75,7 @@ export function renderReport(models: ModelResult[], startedAt: Date, notes: stri
     lines.push(
       `| ${s.model} | ${pct(s.pass, s.total)} (${s.pass}/${s.total}) | ${
         local ? '–' : s.llmCalls.toFixed(1)
-      } | ${local ? '–' : Math.round(s.requestChars)} | ${local ? '–' : s.secondsPerCall.toFixed(1)} | ${
+      } | ${local ? '–' : `${Math.round(s.inputTokens)} / ${Math.round(s.outputTokens)}`} | ${local ? '–' : s.secondsPerCall.toFixed(1)} | ${
         local ? '–' : s.toolsOffered.toFixed(0)
       } | ${local ? '–' : `${s.moreTools}/${s.withModel}`} | ${s.broken} |`,
     );

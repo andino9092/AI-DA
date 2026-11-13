@@ -258,3 +258,96 @@ stand unless an entry here says otherwise.
 - **Consequences:** The early-exit fix in Phase 4 is what unblocks this. Groq's free allowance
   turned out to be about 50 requests a day per model at the current prompt size, so a full eval of
   a Groq model uses most of that model's day.
+
+## D-017: Traces go in a third daily log file
+
+- **Date:** 2026-11-13
+- **Status:** Accepted
+- **Context:** Phase 2 adds timing and token records. There are two daily log files today: actions
+  (what AI-DA did) and outbound (exactly what was sent to the AI).
+- **Decision:** A new daily traces file next to the other two, linked to them by the same request
+  id.
+- **Options considered:**
+  - Adding duration and token fields to the action log: one file in order, but the audit log gets
+    noisier and its format harder to change. Not chosen.
+  - A tracing library (OpenTelemetry) with a local viewer: the industry standard, but more
+    dependencies and machinery than a single-user desktop app needs. Not chosen.
+- **Consequences:** The action log stays a readable record of what was done. The trace format can
+  change on its own. Traces hold numbers and names only (durations, counts, tool and model names),
+  never the text of a command or reply.
+
+## D-018: Token counts come from the providers
+
+- **Date:** 2026-11-13
+- **Status:** Accepted
+- **Context:** The providers did not pass token usage back, so the eval estimated request size in
+  characters.
+- **Decision:** Add an optional `usage` field (input and output tokens) to the provider response
+  and fill it from what Gemini and Groq report.
+- **Options considered:** Estimating tokens from characters: no interface change, but off by 20 to
+  30 percent and blind to output and reasoning tokens. Not chosen.
+- **Consequences:** Changes an interface other modules rely on (`LlmResponse`), in an additive
+  way. Makes it possible to track Groq's tokens-per-day limit (GitHub issue 7).
+
+## D-019: Tracing covers the agent and the voice pipeline
+
+- **Date:** 2026-11-13
+- **Status:** Accepted
+- **Context:** Deciding how much of a request Phase 2 times.
+- **Decision:** From the end of speech to the first spoken audio: transcription, the instant
+  parser, each model call, each tool, confirmations, and speech synthesis.
+- **Options considered:** The agent only (parser, model calls, tools): smaller, enough for cost
+  and step counts, but silent on how long hearing and speaking take. Not chosen.
+- **Consequences:** The voice controller is instrumented as well as the assistant. Phase 3 gets
+  its latency baseline before the voice pipeline changes.
+
+## D-020: Trace results are read with a command
+
+- **Date:** 2026-11-13
+- **Status:** Accepted
+- **Context:** Deciding how the trace numbers are read.
+- **Decision:** `npm run trace:report` prints a summary over recent days: time per stage (typical
+  and worst), instant versus model share, steps and tokens per request, failures by kind, and
+  requests against free quotas.
+- **Options considered:** A Settings page (visible without a terminal, but UI work that is slower
+  to change), or both. Not chosen for now.
+- **Consequences:** No UI work in Phase 2. A Settings page can be built on the same summary later.
+
+## D-021: Opt-in voice diagnostics record every utterance, in numbers only
+
+- **Date:** 2026-11-13
+- **Status:** Accepted
+- **Context:** Live testing showed missed wake-ups and missed commands after voice recognition was
+  enrolled. The cause could not be found: nothing is recorded about speech AI-DA rejects.
+  `PLAN.md` records that speech not addressed to Aida is "dropped unlogged", which a diagnostic
+  record of rejected speech conflicts with.
+- **Decision:** Revise that decision. A switch in Settings, off by default, turns on voice
+  diagnostics. While on, every utterance the microphone picks up gets one line in a separate log:
+  length, loudness, whether it was a wake check or a command, whether the wake phrase matched, the
+  voice score and threshold, how long transcription took, a word count, and the outcome. Never the
+  transcript or the audio. Andy chose to cover all speech "for now".
+- **Options considered:**
+  - Recording only speech that contains "Hey Aida": keeps the earlier decision intact, but cannot
+    show the case where Whisper never heard the name. Not chosen.
+  - No logging, using the Mic check window by hand: nothing to analyse afterwards. Not chosen.
+- **Consequences:** With the switch on, the log shows that something was said near the microphone
+  and when, including speech that was not for Aida. With it off, behaviour is as before. "For now"
+  means this is revisited once the wake and command problems are understood.
+
+## D-022: Gmail and Calendar stay on Google sign-in with the user's own Cloud project
+
+- **Date:** 2026-11-13
+- **Status:** Accepted
+- **Context:** Publishing the Google sign-in app asks for an app name, support email, homepage and
+  privacy policy. Andy asked whether Gmail and Calendar notifications could work without Google
+  Cloud.
+- **Decision:** Keep what is built: Google sign-in through the user's own Cloud project, with
+  headers-only Gmail access and read-only Calendar access.
+- **Options considered:**
+  - Gmail by IMAP with an app password and Calendar by its private iCal link: no Cloud project,
+    but an app password can read whole emails, which gives up the headers-only promise. Not chosen.
+  - Reading Windows' own notifications: no Google setup, but it only sees what Windows shows, and
+    it was not confirmed that an unpackaged app may use that feature. Not chosen.
+- **Consequences:** Each user needs their own Google Cloud project, which is a barrier if AI-DA is
+  ever meant for other people. The APIs are free at AI-DA's usage today; Google has announced
+  quota and billing changes for later in 2026.

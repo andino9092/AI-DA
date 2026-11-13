@@ -8,6 +8,7 @@ import {
   type ProviderId,
 } from '../providers/llm/types';
 import type { ProviderSlot } from '@shared/llm';
+import type { Trace } from '../trace/tracer';
 import type { QuotaTracker } from './quota';
 
 export interface RoutedProvider {
@@ -104,6 +105,8 @@ export class LlmRouter {
     request: LlmRequest,
     requestId: string,
     signal: AbortSignal,
+    /** Every attempt, answered or not, is timed into this trace. */
+    trace?: Trace,
   ): Promise<LlmResponse & { provider: ProviderId }> {
     const candidates = this.providers();
     if (candidates.length === 0) {
@@ -144,7 +147,29 @@ export class LlmRouter {
       for (let attempt = 1; attempt <= 2; attempt++) {
         if (this.now() - started > TOTAL_BUDGET_MS) break;
         try {
-          const response = await this.attempt(provider, label, slot, request, requestId, signal);
+          const call = () => this.attempt(provider, label, slot, request, requestId, signal);
+          const response = trace
+            ? await trace.time<LlmResponse>(
+                (answer, err) => ({
+                  name: 'llm',
+                  provider: provider.id,
+                  model: provider.model,
+                  toolsOffered: request.tools.length,
+                  ...(answer?.usage ?? {}),
+                  ...(err
+                    ? {
+                        error:
+                          err instanceof ProviderError
+                            ? err.message.endsWith('(timed out)')
+                              ? 'timeout'
+                              : err.kind
+                            : 'error',
+                      }
+                    : {}),
+                }),
+                call,
+              )
+            : await call();
           this.quota.clear(slot);
           this.health?.reached();
           return { ...response, provider: provider.id };

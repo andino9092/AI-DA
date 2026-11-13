@@ -10,6 +10,7 @@ import type { ToolExecutor } from '../safety/executor';
 import type { ToolRegistry } from '../tools/registry';
 import type { ToolResult } from '../tools/types';
 import type { Routine } from '@shared/settings';
+import type { Trace, Tracer } from '../trace/tracer';
 import { parseInstant } from './instant-parser';
 import { matchRoutine } from './routines';
 import {
@@ -51,6 +52,8 @@ export interface AssistantDeps {
     expandNicknames(text: string): string;
     promptFacts(): string[];
   };
+  /** Times each request's stages into the traces log. */
+  tracer?: Tracer;
 }
 
 type Ctx = Parameters<ToolExecutor['execute']>[1];
@@ -59,6 +62,11 @@ export interface HandleOptions {
   source: 'palette' | 'voice' | 'remote';
   activeWindow: number | null;
   signal?: AbortSignal;
+  /**
+   * A trace the caller already started (the voice loop, which times transcription before and
+   * speech after). The caller ends it; without one, the assistant starts and ends its own.
+   */
+  trace?: Trace;
 }
 
 interface Conversation {
@@ -74,7 +82,9 @@ export class Assistant {
 
   /** Handles one command end to end and returns the reply to show or speak. */
   async handle(text: string, options: HandleOptions): Promise<string> {
-    const requestId = randomUUID();
+    const trace = options.trace ?? this.deps.tracer?.start(options.source);
+    // The trace id doubles as the request id, so the three logs line up.
+    const requestId = trace?.id ?? randomUUID();
     const signal = options.signal ?? new AbortController().signal;
     const conversation = this.currentConversation();
     const { guard, log, emit } = this.deps;
@@ -89,12 +99,20 @@ export class Assistant {
       session: conversation.session,
       activeWindow: options.activeWindow,
       signal,
+      trace,
+    };
+    const done = (text: string, ok: boolean): string => {
+      trace?.outcome(ok);
+      const reply = this.reply(requestId, conversation, text, ok);
+      if (!options.trace) trace?.end();
+      return reply;
     };
     const expand = (t: string) => this.deps.memory?.expandNicknames(t) ?? t;
 
     // Routines: "gaming mode" runs each saved command in turn, as if said one after another.
     const routine = matchRoutine(expand(text), this.deps.routines?.() ?? []);
     if (routine) {
+      trace?.routed('routine');
       log.write({
         type: 'route',
         requestId,
@@ -119,17 +137,17 @@ export class Assistant {
           if (signal.aborted) break;
         }
       }
-      return this.reply(requestId, conversation, replies.join(' ') || 'Done.', ok);
+      return done(replies.join(' ') || 'Done.', ok);
     }
 
     try {
       const result = await this.respond(expand(text), conversation, ctx);
-      return this.reply(requestId, conversation, result.text, result.ok);
+      return done(result.text, result.ok);
     } catch (err) {
       const message = this.failure(err, requestId, conversation);
       // Drop the half-finished exchange so the next request starts clean.
       this.conversation = null;
-      return this.reply(requestId, conversation, message, false);
+      return done(message, false);
     }
   }
 
@@ -148,6 +166,7 @@ export class Assistant {
     if (planned) {
       const results = await this.runInstant(planned, ctx);
       if (results) {
+        ctx.trace?.routed('instant');
         log.write({ type: 'route', requestId, route: 'instant' });
         // Keep local commands in the history so follow-ups ("and make it louder") make sense.
         conversation.messages.push({ role: 'user', text: scrubbed.text });
@@ -163,6 +182,7 @@ export class Assistant {
         ok: false,
       };
     }
+    ctx.trace?.routed('llm');
     log.write({ type: 'route', requestId, route: 'llm' });
     emit({ type: 'status', requestId, text: 'Thinking…' });
     conversation.messages.push({ role: 'user', text: scrubbed.text });
@@ -256,6 +276,7 @@ export class Assistant {
         { system, messages: conversation.messages, tools },
         ctx.requestId,
         ctx.signal,
+        ctx.trace,
       );
 
       conversation.messages.push({

@@ -86,7 +86,14 @@ export class GroqProvider implements LlmProvider {
         name: c.function.name,
         args: parseArgs(c.function.arguments),
       }));
-      return { text: stripThinking(message?.content ?? ''), toolCalls };
+      const counted = completion.usage;
+      return {
+        text: stripThinking(message?.content ?? ''),
+        toolCalls,
+        usage: counted
+          ? { inputTokens: counted.prompt_tokens, outputTokens: counted.completion_tokens }
+          : undefined,
+      };
     } catch (err) {
       if (signal.aborted) throw new ProviderError('aborted', 'Cancelled.');
       if (err instanceof APIError) {

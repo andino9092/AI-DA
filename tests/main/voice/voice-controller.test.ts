@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { AssistantState } from '../../../src/shared/assistant';
 import type { AudioCommand, HeardEvent, OverlayState } from '../../../src/shared/voice';
+import { Tracer, type TraceEntry } from '../../../src/main/trace/tracer';
+import type { VoiceDiagnostic } from '../../../src/main/voice/diagnostics';
 import { parseYesNo, VoiceController } from '../../../src/main/voice/voice-controller';
 
 const samples = new Float32Array(1600);
@@ -14,6 +16,9 @@ function setup(options: {
   monitoring?: boolean;
   duck?: (on: boolean) => void;
   speaker?: { enabled(): boolean; match(samples: Float32Array): Promise<number | null> };
+  tracer?: Tracer;
+  paused?: () => boolean;
+  diagnose?: (diagnostic: VoiceDiagnostic) => void;
 }) {
   const transcripts = [...options.transcripts];
   const commands: string[] = [];
@@ -36,10 +41,14 @@ function setup(options: {
       spoken.push(text);
       onChunk(new Float32Array(10), 24_000);
     },
-    handleCommand: async (text) => {
+    handleCommand: async (text, _activeWindow, trace) => {
       commands.push(text);
+      trace?.routed('instant');
       return options.reply ?? 'Done.';
     },
+    tracer: options.tracer,
+    paused: options.paused,
+    diagnose: options.diagnose,
     foregroundWindow: async () => 42,
     audio: (c) => {
       audio.push(c);
@@ -121,6 +130,136 @@ describe('VoiceController', () => {
     t.finish();
     expect(t.states.at(-1)).toBeNull();
     expect(t.modes().at(-1)).toBe('wake');
+  });
+
+  it('hides the Listening pill once a voice sample is recorded', async () => {
+    const t = setup({ transcripts: [] });
+    const sample = t.controller.recordSample();
+    expect(t.overlay.at(-1)).toEqual({ phase: 'listening' });
+    t.controller.onUtterance({ mode: 'command', samples });
+    expect(await sample).toBe(samples);
+    expect(t.overlay.at(-1)).toEqual({ phase: 'hidden' });
+    expect(t.states.at(-1)).toBeNull();
+    expect(t.modes().at(-1)).toBe('wake');
+    // A sample is never transcribed or run.
+    expect(t.sttCalls).toEqual([]);
+    expect(t.commands).toEqual([]);
+  });
+
+  it('hears "Hey Aida" but runs nothing while voice samples are being recorded', async () => {
+    let paused = true;
+    const t = setup({
+      transcripts: ['Hey Aida, open Spotify.', 'Hey Aida, open Spotify.'],
+      paused: () => paused,
+    });
+    await t.say();
+    expect(t.commands).toEqual([]);
+    expect(t.spoken).toEqual([]);
+    paused = false;
+    await t.say();
+    expect(t.commands).toEqual(['open Spotify.']);
+  });
+
+  it('keeps listening when "Hey Aida" is said again instead of a command', async () => {
+    const t = setup({
+      transcripts: ['Hey Aida.', 'Hey Ada,', 'Hey Aida, open spotify'],
+      speak: false,
+    });
+    await t.say();
+    await t.say('command');
+    expect(t.commands).toEqual([]);
+    expect(t.modes().at(-1)).toBe('command');
+    // A repeated name in front of the command is dropped, not sent to the assistant.
+    await t.say('command');
+    expect(t.commands).toEqual(['open spotify']);
+  });
+
+  it('reports what became of each utterance, in numbers only', async () => {
+    const seen: VoiceDiagnostic[] = [];
+    const t = setup({
+      transcripts: [
+        'So anyway, I told him no.',
+        'Hey Aida, pause the music.',
+        'Hey Aida.',
+        'Hey Aida.',
+        '',
+      ],
+      speak: false,
+      diagnose: (d) => seen.push(d),
+    });
+    await t.say(); // not for Aida
+    await t.say(); // a whole command
+    await t.say(); // the name alone: starts listening
+    await t.say('command'); // the name again
+    await t.say('command'); // nothing usable
+    t.controller.pushToTalk();
+    t.controller.onAudioEvent({ type: 'command-timeout' });
+
+    expect(seen.map((d) => [d.mode, d.outcome])).toEqual([
+      ['wake', 'not addressed'],
+      ['wake', 'accepted'],
+      ['wake', 'wake only'],
+      ['command', 'repeated wake'],
+      ['command', 'empty'],
+      ['command', 'timeout'],
+    ]);
+    expect(seen[0]).toMatchObject({ seconds: 0.1, wakeMatched: false, words: 6 });
+    expect(seen[1]).toMatchObject({ wakeMatched: true, words: 5 });
+    expect(seen[1]!.sttMs).toBeGreaterThanOrEqual(0);
+    // Not a word of what was said.
+    expect(JSON.stringify(seen)).not.toMatch(/anyway|pause|music|Aida/i);
+  });
+
+  it('reports the voice score when "Hey Aida" is rejected for the wrong voice', async () => {
+    const seen: VoiceDiagnostic[] = [];
+    const t = setup({
+      transcripts: ['Hey Aida, pause the music.'],
+      speaker: { enabled: () => true, match: async () => 0.412 },
+      diagnose: (d) => seen.push(d),
+    });
+    await t.say();
+    expect(t.commands).toEqual([]);
+    expect(seen).toEqual([
+      expect.objectContaining({
+        outcome: 'rejected: voice',
+        wakeMatched: true,
+        voiceScore: 0.41,
+        threshold: 0.45,
+      }),
+    ]);
+  });
+
+  it('traces a spoken command from transcription to the first audio of the reply', async () => {
+    const entries: TraceEntry[] = [];
+    const tracer = new Tracer((e) => entries.push(e));
+    const t = setup({ transcripts: ['Hey Aida, pause the music.'], reply: 'Okay.', tracer });
+    await t.say();
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({ source: 'voice', route: 'instant', ok: true });
+    expect(entries[0]!.spans.map((s) => s.name)).toEqual(['stt', 'tts']);
+    // 1,600 samples at 16 kHz.
+    expect(entries[0]!.spans[0]).toMatchObject({ audioSeconds: 0.1, reused: false });
+  });
+
+  it('traces nothing for speech that is not addressed to Aida', async () => {
+    const entries: TraceEntry[] = [];
+    const t = setup({
+      transcripts: ['So anyway, I told him no.'],
+      tracer: new Tracer((e) => entries.push(e)),
+    });
+    await t.say();
+    expect(entries).toEqual([]);
+  });
+
+  it('ends the trace when the reply is only shown, not spoken', async () => {
+    const entries: TraceEntry[] = [];
+    const t = setup({
+      transcripts: ['Hey Aida, pause the music.'],
+      speak: false,
+      tracer: new Tracer((e) => entries.push(e)),
+    });
+    await t.say();
+    expect(entries[0]!.spans.map((s) => s.name)).toEqual(['stt']);
   });
 
   it('drops speech that is not addressed to Aida, without calling the assistant', async () => {

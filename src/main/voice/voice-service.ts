@@ -26,12 +26,17 @@ import {
   type VoiceprintStore,
 } from './speaker-id';
 import type { TtsResponse } from '@shared/tts-protocol';
+import type { Trace, Tracer } from '../trace/tracer';
+import type { VoiceDiagnostic } from './diagnostics';
 import { VoiceController } from './voice-controller';
 
 export interface VoiceServiceDeps {
   settings: () => Settings;
   models: ModelManager;
-  handleCommand: (text: string, activeWindow: number | null) => Promise<string>;
+  handleCommand: (text: string, activeWindow: number | null, trace?: Trace) => Promise<string>;
+  tracer?: Tracer;
+  /** Receives what became of each utterance; the caller decides whether to keep it. */
+  diagnose?: (diagnostic: VoiceDiagnostic) => void;
   foregroundWindow: () => Promise<number | null>;
   setState: (state: AssistantState | null) => void;
   duck: (on: boolean) => void;
@@ -46,6 +51,12 @@ const ENROLL_SAMPLES = 5;
 const ENROLL_MINIMUM = 3;
 /** Extra recordings made with sound playing, added to an existing voiceprint. */
 const ADD_SAMPLES = 3;
+/**
+ * While voice samples are being recorded, "Hey Aida" isn't acted on: the samples are real
+ * commands said out loud. It ends with Save or Cancel, or by itself this long after the last
+ * recording, so a session that was walked away from can't leave Aida deaf.
+ */
+const ENROLL_QUIET_MS = 30_000;
 
 const WAKE_PROMPT = 'Hey Aida,';
 
@@ -69,6 +80,8 @@ export class VoiceService {
   private enrollment: Float32Array[] = [];
   /** The session adds to the saved voiceprint (recorded over sound) instead of replacing it. */
   private adding = false;
+  /** Voice samples are being recorded until this time (see ENROLL_QUIET_MS). */
+  private enrollingUntil = 0;
 
   constructor(private readonly deps: VoiceServiceDeps) {
     const { models, settings } = deps;
@@ -100,6 +113,8 @@ export class VoiceService {
         return this.tts.speak(text, { voice, speed }, onChunk, signal);
       },
       handleCommand: deps.handleCommand,
+      tracer: deps.tracer,
+      diagnose: deps.diagnose,
       foregroundWindow: deps.foregroundWindow,
       audio: (command) =>
         this.audio.send(command.type === 'config' ? this.withMicSource(command) : command),
@@ -116,6 +131,7 @@ export class VoiceService {
         };
       },
       monitoring: () => this.monitor !== null,
+      paused: () => Date.now() < this.enrollingUntil,
       onHeard: (heard) => this.sendMonitor({ type: 'heard', heard }),
       canListen: () => this.canListen(),
       canSpeak: () => models.isReady('kokoro'),
@@ -335,7 +351,9 @@ export class VoiceService {
     if (!this.deps.models.isReady('speaker')) return fail('Download voice recognition first.');
     if (!this.canListen()) return fail('Download the speech models first.');
     if (this.deps.settings().microphoneMuted) return fail('Unmute the microphone first.');
+    this.enrollingUntil = Date.now() + ENROLL_QUIET_MS;
     const samples = await this.controller.recordSample();
+    this.enrollingUntil = Date.now() + ENROLL_QUIET_MS;
     if (!samples) return fail("I didn't hear anything. Try again, a little louder.");
     if (samples.length < MIN_SPEECH_SAMPLES * 2)
       return fail('That was too short. Say the whole sentence.');
@@ -361,6 +379,7 @@ export class VoiceService {
         ? addToVoiceprint(this.voiceprint, this.enrollment)
         : makeVoiceprint(this.enrollment);
     this.adding = false;
+    this.enrollingUntil = 0;
     this.deps.voiceprints.save(print);
     this.voiceprint = print;
     this.enrollment = [];
@@ -370,6 +389,7 @@ export class VoiceService {
   cancelVoiceEnrollment(): VoiceIdStatus {
     this.enrollment = [];
     this.adding = false;
+    this.enrollingUntil = 0;
     return this.voiceIdStatus();
   }
 
@@ -378,6 +398,7 @@ export class VoiceService {
     this.voiceprint = null;
     this.enrollment = [];
     this.adding = false;
+    this.enrollingUntil = 0;
     return this.voiceIdStatus();
   }
 

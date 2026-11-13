@@ -102,7 +102,11 @@ export class MeteredProvider implements LlmProvider {
       const started = Date.now();
       try {
         const response = await this.inner.complete(request, signal);
-        if (run) run.llmMs += Date.now() - started;
+        if (run) {
+          run.llmMs += Date.now() - started;
+          run.inputTokens += response.usage?.inputTokens ?? 0;
+          run.outputTokens += response.usage?.outputTokens ?? 0;
+        }
         return response;
       } catch (err) {
         const retryable =
@@ -170,6 +174,8 @@ export async function runTask(
     confirms: [],
     llmCalls: 0,
     requestChars: 0,
+    inputTokens: 0,
+    outputTokens: 0,
     llmMs: 0,
     toolsOffered: [],
     sent: [],

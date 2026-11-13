@@ -94,8 +94,11 @@ export interface RunRecord {
   confirms: { summary: string; approved: boolean }[];
   /** Model round trips. */
   llmCalls: number;
-  /** Size of everything sent to the model, in characters (a stand-in for input tokens). */
+  /** Size of everything sent to the model, in characters. */
   requestChars: number;
+  /** Tokens the provider counted across the task's round trips (0 if it doesn't report them). */
+  inputTokens: number;
+  outputTokens: number;
   /** Time spent waiting for the model, without pauses for rate limits. */
   llmMs: number;
   /** The tool names offered to the model on each round trip. */

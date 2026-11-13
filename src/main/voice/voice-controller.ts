@@ -13,6 +13,8 @@ import { STT_SAMPLE_RATE, type SpeechToText } from './stt';
 import { peakDbfs } from './wav';
 import { matchWakePhrase } from './wake-phrase';
 import { VOICE_MATCH_THRESHOLDS } from '@shared/voice';
+import type { Trace, Tracer } from '../trace/tracer';
+import type { VoiceDiagnostic, VoiceOutcome } from './diagnostics';
 
 export interface VoiceDeps {
   stt: SpeechToText;
@@ -21,7 +23,12 @@ export interface VoiceDeps {
     onChunk: (samples: Float32Array, rate: number) => void,
     signal: AbortSignal,
   ) => Promise<void>;
-  handleCommand: (text: string, activeWindow: number | null) => Promise<string>;
+  /** trace: the request's trace, already holding the transcription time; the caller ends it. */
+  handleCommand: (text: string, activeWindow: number | null, trace?: Trace) => Promise<string>;
+  /** Times spoken requests from the end of speech to the first audio of the reply. */
+  tracer?: Tracer;
+  /** Told what became of everything the microphone picked up (numbers only; see D-021). */
+  diagnose?: (diagnostic: VoiceDiagnostic) => void;
   foregroundWindow: () => Promise<number | null>;
   audio: (command: AudioCommand) => void;
   overlay: (state: OverlayState, autoHideMs?: number) => void;
@@ -35,6 +42,11 @@ export interface VoiceDeps {
   };
   /** Settings → Mic check is open: keep the mic on and report what's heard. */
   monitoring: () => boolean;
+  /**
+   * "Hey Aida" is heard but not acted on right now: the owner is recording voice samples, which
+   * are real commands ("Hey Aida, open Spotify") said out loud.
+   */
+  paused?: () => boolean;
   onHeard: (heard: HeardEvent) => void;
   /** Ready to listen (VAD + speech recognition installed) / ready to talk (voice installed). */
   canListen: () => boolean;
@@ -293,7 +305,10 @@ export class VoiceController {
       case 'command-timeout':
         if (this.sampling) this.sampling(null);
         else if (this.confirming) this.answer(false);
-        else if (this.phase === 'command') this.toIdle();
+        else if (this.phase === 'command') {
+          this.deps.diagnose?.({ outcome: 'timeout', mode: 'command' });
+          this.toIdle();
+        }
         break;
       case 'no-speech':
         if (this.confirming) this.answer(false);
@@ -394,7 +409,8 @@ export class VoiceController {
     return new Promise((resolve) => {
       this.sampling = (samples) => {
         this.sampling = null;
-        this.toIdle(true);
+        // Nothing follows a sample (no reply to show), so the "Listening" pill has to go now.
+        this.toIdle();
         resolve(samples);
       };
       this.stopSpeaking();
@@ -404,16 +420,27 @@ export class VoiceController {
 
   private async process(utterance: Utterance): Promise<void> {
     const { mode, samples } = utterance;
-    if (mode === 'wake' && this.phase === 'processing') return;
     const expectingCommand = mode === 'command' || this.phase === 'command';
+    // What became of this utterance, for the voice diagnostics log.
+    const heardAs: Omit<VoiceDiagnostic, 'outcome'> = {
+      mode: expectingCommand ? 'command' : 'wake',
+      seconds: Math.round((samples.length / STT_SAMPLE_RATE) * 10) / 10,
+      peakDb: Math.round(peakDbfs(samples)),
+      ...(utterance.cut ? { cut: true } : {}),
+    };
+    const note = (outcome: VoiceOutcome) => this.deps.diagnose?.({ ...heardAs, outcome });
+    if (mode === 'wake' && this.phase === 'processing') return note('busy');
     if (expectingCommand) this.deps.overlay({ phase: 'transcribing' });
 
     let text: string;
     this.transcribing = expectingCommand;
+    // The utterance arrives when the speaker has stopped: the clock for the reply starts here.
+    const heardAt = performance.now();
     const heard = this.transcribe(utterance);
     try {
       text = await heard.text;
     } catch (err) {
+      note('stt error');
       if (expectingCommand) this.fail(err instanceof Error ? err.message : String(err));
       return;
     } finally {
@@ -427,9 +454,16 @@ export class VoiceController {
     const voiceMatch = wake && heard.voice ? await heard.voice : null;
     const threshold = VOICE_MATCH_THRESHOLDS[this.deps.settings().sensitivity];
     const notYourVoice = voiceMatch !== null && voiceMatch < threshold;
+    heardAs.sttMs = Math.round(performance.now() - heardAt);
+    heardAs.words = text.split(/\s+/).filter(Boolean).length;
+    if (!expectingCommand) heardAs.wakeMatched = wake !== null;
+    if (voiceMatch !== null) {
+      heardAs.voiceScore = Math.round(voiceMatch * 100) / 100;
+      heardAs.threshold = threshold;
+    }
     if (notYourVoice) wake = null;
     // The mic check can run with the wake word off: report what was heard, but don't act on it.
-    const actOnWake = this.deps.settings().wakeWord;
+    const actOnWake = this.deps.settings().wakeWord && !this.deps.paused?.();
     if (this.deps.monitoring())
       this.deps.onHeard({
         text,
@@ -443,17 +477,30 @@ export class VoiceController {
 
     let command: string;
     if (expectingCommand) {
-      command = [this.commandPrefix, text].filter(Boolean).join(' ');
+      // "Hey Aida" said again while she is already listening isn't part of the command.
+      const again = matchWakePhrase(text, { fuzzy: this.fuzzy() });
+      if (again && !again.command && !this.commandPrefix) {
+        // Only the name: still listening for the command itself.
+        note('repeated wake');
+        this.deps.overlay({ phase: 'listening' });
+        this.refresh();
+        return;
+      }
+      command = [this.commandPrefix, again ? again.command : text].filter(Boolean).join(' ');
       this.commandPrefix = '';
       if (!command) {
+        note('empty');
         this.deps.overlay({ phase: 'error', text: "Sorry, I didn't catch that." }, 2500);
         this.toIdle(true);
         return;
       }
     } else {
-      if (!wake || !actOnWake) return; // Not for us: dropped without logging.
+      // Not for us: dropped. Nothing of what was said is kept, in any log.
+      if (!wake) return note(notYourVoice ? 'rejected: voice' : 'not addressed');
+      if (!actOnWake) return note('wake not acted on');
       if (utterance.cut) {
         // Heard over continuous sound while the sentence may go on: listen for the rest.
+        note('wake, more to come');
         this.stopSpeaking();
         this.armCommand();
         this.commandPrefix = wake.command;
@@ -461,6 +508,7 @@ export class VoiceController {
         return;
       }
       if (!wake.command) {
+        note('wake only');
         this.stopSpeaking();
         this.armCommand();
         return;
@@ -469,14 +517,26 @@ export class VoiceController {
     }
 
     if (STOP_WORDS.test(command.trim())) {
+      note('stop');
       this.stopSpeaking();
       this.deps.audio({ type: 'chime', chime: 'done' });
       this.toIdle();
       return;
     }
 
+    note('accepted');
     this.stopSpeaking();
-    await this.run(command);
+    const sttMs = performance.now() - heardAt;
+    const trace = this.deps.tracer?.start('voice', sttMs);
+    trace?.add(
+      {
+        name: 'stt',
+        audioSeconds: Math.round((samples.length / STT_SAMPLE_RATE) * 10) / 10,
+        reused: utterance.reuse === true,
+      },
+      sttMs,
+    );
+    await this.run(command, trace);
   }
 
   private async handleAnswer(utterance: Utterance): Promise<void> {
@@ -497,22 +557,34 @@ export class VoiceController {
     this.refresh();
   }
 
-  /** Speaks text, resolving once it has been handed to the speakers. */
-  private async say(text: string): Promise<void> {
+  /**
+   * Speaks text, resolving once it has been handed to the speakers. A trace passed in gets the
+   * time to the first audio and is ended there: that is when the user starts hearing the reply.
+   */
+  private async say(text: string, trace?: Trace): Promise<void> {
     const id = randomUUID();
     const abort = new AbortController();
     this.speech = { id, abort };
     this.deps.duck?.(true);
     this.deps.setState('speaking');
+    const started = performance.now();
+    let first = true;
     await this.deps.speak(
       text,
-      (samples, sampleRate) => this.deps.audio({ type: 'play', id, samples, sampleRate }),
+      (samples, sampleRate) => {
+        if (first) {
+          first = false;
+          trace?.add({ name: 'tts' }, performance.now() - started);
+          trace?.end();
+        }
+        this.deps.audio({ type: 'play', id, samples, sampleRate });
+      },
       abort.signal,
     );
     this.deps.audio({ type: 'end-of-speech', id });
   }
 
-  private async run(command: string): Promise<void> {
+  private async run(command: string, trace = this.deps.tracer?.start('voice')): Promise<void> {
     this.phase = 'processing';
     this.refresh();
     this.deps.setState('thinking');
@@ -520,12 +592,16 @@ export class VoiceController {
 
     const generation = this.generation;
     const activeWindow = await this.deps.foregroundWindow().catch(() => null);
-    const reply = await this.deps.handleCommand(command, activeWindow);
-    if (generation !== this.generation) return;
+    const reply = await this.deps.handleCommand(command, activeWindow, trace);
+    if (generation !== this.generation) {
+      trace?.end();
+      return;
+    }
     this.lastReply = reply;
 
     const { speakReplies } = this.deps.settings();
     if (!speakReplies || !this.deps.canSpeak() || !reply) {
+      trace?.end();
       this.deps.overlay({ phase: 'reply', text: reply }, REPLY_VISIBLE_MS);
       this.followUpOrIdle(reply);
       return;
@@ -534,9 +610,10 @@ export class VoiceController {
     this.phase = 'speaking';
     this.deps.overlay({ phase: 'speaking', text: reply });
     try {
-      await this.say(reply);
+      await this.say(reply, trace);
     } catch {
       // Speaking failed: the reply is still on screen.
+      trace?.end();
       this.speech = null;
       this.deps.overlay({ phase: 'reply', text: reply }, REPLY_VISIBLE_MS);
       this.followUpOrIdle(reply);

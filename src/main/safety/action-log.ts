@@ -1,6 +1,8 @@
 import { appendFileSync, mkdirSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import type { ScrubbedText } from '../privacy/guard';
+import type { TraceEntry } from '../trace/tracer';
+import type { VoiceLogEntry } from '../voice/diagnostics';
 
 /** Every string field is `ScrubbedText`, so nothing sensitive can be written to disk by mistake. */
 export type LogEntry =
@@ -35,13 +37,13 @@ const MAX_BACKLOG = 5000;
 
 /**
  * Append-only JSON Lines logs, one file per day and kind (actions-YYYY-MM-DD.jsonl,
- * outbound-YYYY-MM-DD.jsonl). The outbound log is the exact text sent to AI providers, so you can
- * audit what left the PC.
+ * outbound-YYYY-MM-DD.jsonl, traces-YYYY-MM-DD.jsonl). The outbound log is the exact text sent to
+ * AI providers, so you can audit what left the PC. The traces log holds timings and counts only.
  */
 export class JsonlLog {
   constructor(
     private readonly dir: string,
-    private readonly prefix: 'actions' | 'outbound',
+    private readonly prefix: 'actions' | 'outbound' | 'traces' | 'voice',
   ) {
     mkdirSync(dir, { recursive: true });
     this.prune();
@@ -51,7 +53,7 @@ export class JsonlLog {
   private backlog: string[] = [];
   private warned = false;
 
-  write(entry: LogEntry | OutboundEntry): void {
+  write(entry: LogEntry | OutboundEntry | TraceEntry | VoiceLogEntry): void {
     this.backlog.push(JSON.stringify({ ts: new Date().toISOString(), ...entry }));
     if (this.backlog.length > MAX_BACKLOG)
       this.backlog.splice(0, this.backlog.length - MAX_BACKLOG);

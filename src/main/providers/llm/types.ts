@@ -38,6 +38,15 @@ export interface LlmResponse {
   text: string;
   toolCalls: ToolCall[];
   raw?: { provider: ProviderId; model?: string; content: unknown };
+  /** Tokens the provider counted for this request, when it reports them. */
+  usage?: TokenUsage;
+}
+
+export interface TokenUsage {
+  /** Everything sent: instructions, history and tool definitions. */
+  inputTokens: number;
+  /** Everything generated, including reasoning the user never sees. */
+  outputTokens: number;
 }
 
 export interface LlmProvider {

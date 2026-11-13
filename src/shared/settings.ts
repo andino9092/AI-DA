@@ -79,6 +79,11 @@ export const settingsSchema = z.object({
      * Ignores other people, and voices from speakers and TVs.
      */
     onlyMyVoice: z.boolean(),
+    /**
+     * Write one numbers-only line per utterance to the voice log (length, loudness, voice score,
+     * outcome; never the words), to find out why "Hey Aida" or a command was missed.
+     */
+    diagnostics: z.boolean(),
   }),
   weather: z.object({
     /** Home city for "what's the weather"; set by name in Settings, never from an IP lookup. */
@@ -165,6 +170,7 @@ export const DEFAULT_SETTINGS: Settings = {
     inputDeviceLabel: null,
     cancelEcho: true,
     onlyMyVoice: true,
+    diagnostics: false,
   },
   weather: { place: null, unit: 'auto' },
   spotify: { clientId: null },

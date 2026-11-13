@@ -1,6 +1,7 @@
 import type { PlaceholderSession, PrivacyGuard } from '../privacy/guard';
 import type { ToolRegistry } from '../tools/registry';
 import type { ToolResult } from '../tools/types';
+import type { Trace } from '../trace/tracer';
 import type { JsonlLog } from './action-log';
 
 export type CommandSource = 'palette' | 'voice' | 'remote';
@@ -24,6 +25,8 @@ export interface ExecuteContext {
   session: PlaceholderSession;
   activeWindow: number | null;
   signal: AbortSignal;
+  /** Tool runs and confirmation waits are timed into this trace. */
+  trace?: Trace;
 }
 
 export interface ToolCallRequest {
@@ -46,6 +49,15 @@ export class ToolExecutor {
   ) {}
 
   async execute(call: ToolCallRequest, ctx: ExecuteContext): Promise<ToolResult> {
+    if (!ctx.trace) return this.run(call, ctx);
+    // Includes any confirmation wait, which is also recorded on its own so it can be taken off.
+    return ctx.trace.time<ToolResult>(
+      (result) => ({ name: 'tool', tool: call.name, ok: result?.ok ?? false }),
+      () => this.run(call, ctx),
+    );
+  }
+
+  private async run(call: ToolCallRequest, ctx: ExecuteContext): Promise<ToolResult> {
     const tool = this.registry.get(call.name);
     if (!tool || tool.risk === 'blocked') {
       return this.finish(ctx, call.name, call.name, {
@@ -71,6 +83,7 @@ export class ToolExecutor {
     const ask = async (text: string, usesSensitiveValue: boolean) => {
       if (ctx.signal.aborted) return false;
       const scrubbedText = this.guard.scrub(text, ctx.session).text;
+      const waitedFrom = performance.now();
       const approved = await this.confirm({
         id: `confirm-${++this.confirmCounter}`,
         requestId: ctx.requestId,
@@ -78,6 +91,7 @@ export class ToolExecutor {
         summary: scrubbedText,
         usesSensitiveValue,
       });
+      ctx.trace?.add({ name: 'confirm', approved }, performance.now() - waitedFrom);
       this.log.write({
         type: 'confirm',
         requestId: ctx.requestId,
