@@ -251,6 +251,18 @@ export const tasks: EvalTask[] = [
     expect: { routes: ['llm'], asksQuestion: true, maxLlmCalls: 2, state: untouched },
   },
   {
+    // A detail is missing rather than a reference: there is no sensible default for how long.
+    id: 'ambiguous-timer-no-duration',
+    category: 'ambiguous',
+    say: ['set a timer'],
+    expect: {
+      routes: ['llm'],
+      asksQuestion: true,
+      maxLlmCalls: 2,
+      state: (w) => w.timers.list().length === 0,
+    },
+  },
+  {
     id: 'impossible-smart-home',
     category: 'impossible',
     say: ['turn off the lights in my bedroom'],
