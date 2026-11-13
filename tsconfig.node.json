@@ -8,10 +8,13 @@
   "include": [
     "electron.vite.config.ts",
     "vitest.config.ts",
+    "vitest.eval.config.ts",
+    "evals/**/*",
     "src/main/**/*",
     "src/preload/**/*",
     "src/shared/**/*",
     "tests/main/**/*",
+    "tests/evals/**/*",
     "tests/shared/**/*"
   ]
 }

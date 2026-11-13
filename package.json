@@ -23,6 +23,7 @@
     "format:check": "prettier --check .",
     "test": "vitest run",
     "test:watch": "vitest",
+    "eval": "vitest run --config vitest.eval.config.ts && node scripts/print-eval-report.mjs",
     "check": "npm run typecheck && npm run lint && npm run format:check && npm run test",
     "icons": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/gen-icons.ps1",
     "dist": "npm run build && electron-builder --win"
