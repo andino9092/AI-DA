@@ -210,6 +210,72 @@ describe('VoiceController', () => {
     expect(JSON.stringify(seen)).not.toMatch(/anyway|pause|music|Aida/i);
   });
 
+  describe('a bare "Hey Aida" with voice recognition on', () => {
+    // The fake scores by length: a bare wake (1,600 samples) is too short to match well; what
+    // the combined wake + command (3,200 samples) scores is up to each test.
+    const speaker = (combined: number) => ({
+      enabled: () => true,
+      match: async (audio: Float32Array) => (audio.length > 1600 ? combined : 0.3),
+    });
+
+    it('wakes Aida without passing the voice check, then runs a command in the right voice', async () => {
+      const seen: VoiceDiagnostic[] = [];
+      const t = setup({
+        transcripts: ['Hey Aida.', 'pause the music'],
+        speak: false,
+        speaker: speaker(0.6),
+        diagnose: (d) => seen.push(d),
+      });
+      await t.say();
+      expect(t.modes().at(-1)).toBe('command');
+      await t.say('command');
+      expect(t.commands).toEqual(['pause the music']);
+      expect(seen.map((d) => [d.outcome, d.voiceScore])).toEqual([
+        ['wake only', 0.3],
+        ['accepted', 0.6],
+      ]);
+    });
+
+    it("runs nothing when the command that follows is not in the owner's voice", async () => {
+      const seen: VoiceDiagnostic[] = [];
+      const t = setup({
+        transcripts: ['Hey Aida.', 'close everything'],
+        speak: false,
+        speaker: speaker(0.2),
+        diagnose: (d) => seen.push(d),
+      });
+      await t.say();
+      await t.say('command');
+      expect(t.commands).toEqual([]);
+      expect(seen.at(-1)).toMatchObject({ outcome: 'rejected: voice', voiceScore: 0.2 });
+      expect(t.overlay.at(-1)).toEqual({ phase: 'error', text: "That didn't sound like you." });
+      expect(t.modes().at(-1)).toBe('wake');
+    });
+
+    it('still rejects a whole sentence in the wrong voice straight away', async () => {
+      const t = setup({
+        transcripts: ['Hey Aida, close everything.'],
+        speaker: { enabled: () => true, match: async () => 0.2 },
+      });
+      await t.say();
+      expect(t.commands).toEqual([]);
+      // Never started listening for a command.
+      expect(t.modes()).not.toContain('command');
+    });
+
+    it('does not check push-to-talk, even after an unverified wake', async () => {
+      const t = setup({
+        transcripts: ['Hey Aida.', 'pause the music'],
+        speak: false,
+        speaker: speaker(0.2),
+      });
+      await t.say();
+      t.controller.pushToTalk();
+      await t.say('command');
+      expect(t.commands).toEqual(['pause the music']);
+    });
+  });
+
   it('reports the voice score when "Hey Aida" is rejected for the wrong voice', async () => {
     const seen: VoiceDiagnostic[] = [];
     const t = setup({
@@ -568,8 +634,10 @@ describe('VoiceController: only my voice', () => {
     const owner = speaker(0.1);
     const t = setup({ transcripts: ['Hey Aida.', 'open spotify'], speaker: owner, speak: false });
     await t.say();
-    // A low score blocked the bare "Hey Aida" too.
-    expect(t.modes()).not.toContain('command');
+    // A bare "Hey Aida" is too short to judge: it wakes Aida, and the command is checked (D-024).
+    expect(t.modes().at(-1)).toBe('command');
+    await t.say('command');
+    expect(t.commands).toEqual([]);
     const off = speaker(0.1, false);
     const t2 = setup({ transcripts: ['Hey Aida.', 'open spotify'], speaker: off, speak: false });
     await t2.say();

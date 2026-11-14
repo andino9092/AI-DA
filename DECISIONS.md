@@ -351,3 +351,40 @@ stand unless an entry here says otherwise.
 - **Consequences:** Each user needs their own Google Cloud project, which is a barrier if AI-DA is
   ever meant for other people. The APIs are free at AI-DA's usage today; Google has announced
   quota and billing changes for later in 2026.
+
+## D-023: "Add samples with sound playing" stays as it is for now
+
+- **Date:** 2026-11-13
+- **Status:** Accepted
+- **Context:** Andy found the feature buggy: it sometimes gets stuck, and voice recognition seemed
+  worse after using it. With speech in the background a sample can run to 15 seconds of mostly
+  the other voice, which is then averaged into the voiceprint. Andy first suggested removing it.
+- **Decision:** Leave the feature unchanged for now and track the problem as a GitHub issue.
+- **Options considered:**
+  - Removing it, so the voiceprint only comes from the quiet samples: simplest and cannot be
+    contaminated, but loses the benefit measured with music. Not chosen for now.
+  - Keeping it with guards (a time limit per sample, and refusing samples that don't match the
+    quiet voiceprint): more code, and refusals may feel as buggy. Not chosen for now.
+- **Consequences:** The trap stays in the app. Until it is fixed, samples should not be added with
+  speech playing, and "Record again" in a quiet room replaces a voiceprint that may be affected.
+
+## D-024: The voice check runs on the command, not on a bare "Hey Aida"
+
+- **Date:** 2026-11-14
+- **Status:** Accepted
+- **Context:** With "Only respond to my voice" on, Aida often ignored her owner. Voice
+  diagnostics from a quiet room showed why: "Hey Aida" on its own is about one second long and
+  scored 0.26 to 0.48 (5 of 7 rejected), while whole sentences of 3 to 5 seconds scored 0.42 to
+  0.58 even over background speech. One second is too little audio to tell voices apart.
+- **Decision:** A bare "Hey Aida" wakes Aida in any voice and she starts listening. The voice check
+  then runs on the command that follows, together with the wake audio. If it is not the owner,
+  nothing runs. A whole sentence said in one breath is checked as before. Push-to-talk stays
+  unchecked.
+- **Options considered:**
+  - A lower threshold for clips under about 1.5 seconds: the smallest change, but short clips are
+    noisy for everyone, so other voices would get through more often, with no data on how often.
+    Not chosen.
+  - Leaving the check as it was and keeping it switched off: anyone, or any speaker, can then wake
+    and command Aida. Not chosen.
+- **Consequences:** A TV or another person saying only "Hey Aida" makes the pill and chime appear,
+  but no command runs. Based on seven short clips; to be confirmed with the Phase 3 voice evals.

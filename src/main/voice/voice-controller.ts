@@ -79,6 +79,13 @@ const YES =
   /^(?:yes|yeah|yep|yup|sure|ok(?:ay)?|do it|go ahead|confirm(?:ed)?|please do|affirmative|correct|send it)\b/i;
 const NO = /^(?:no|nope|nah|cancel|stop|don'?t|do not|never ?mind|wait)\b/i;
 
+function joinAudio(a: Float32Array, b: Float32Array): Float32Array {
+  const out = new Float32Array(a.length + b.length);
+  out.set(a);
+  out.set(b, a.length);
+  return out;
+}
+
 /** "Yes" → true, "No" → false, anything else → null (treated as no). */
 export function parseYesNo(text: string): boolean | null {
   const t = text.trim().replace(/^(?:uh|um|hmm|well)[,.]?\s+/i, '');
@@ -122,6 +129,12 @@ export class VoiceController {
    * still going, so the rest is heard in command mode and appended to this.
    */
   private commandPrefix = '';
+  /**
+   * A bare "Hey Aida" woke Aida without passing the voice check: about a second of audio is too
+   * little to tell voices apart. Its audio is kept so the command that follows can be checked
+   * together with it, where there is enough speech to judge (D-024).
+   */
+  private unverifiedWake: Float32Array | null = null;
   private prefixTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(private readonly deps: VoiceDeps) {}
@@ -151,6 +164,8 @@ export class VoiceController {
       return;
     }
     this.stopSpeaking();
+    // Push-to-talk works for anyone: no voice check on what follows.
+    this.unverifiedWake = null;
     this.armCommand();
   }
 
@@ -437,6 +452,10 @@ export class VoiceController {
     // The utterance arrives when the speaker has stopped: the clock for the reply starts here.
     const heardAt = performance.now();
     const heard = this.transcribe(utterance);
+    // The command after an unverified "Hey Aida": check the voice on both together, alongside
+    // transcription so it adds no delay.
+    const wakeAudio = expectingCommand ? this.unverifiedWake : null;
+    const commandVoice = wakeAudio ? this.voiceMatch(joinAudio(wakeAudio, samples)) : null;
     try {
       text = await heard.text;
     } catch (err) {
@@ -453,7 +472,10 @@ export class VoiceController {
     // Voice recognition: "Hey Aida" only counts in the owner's voice.
     const voiceMatch = wake && heard.voice ? await heard.voice : null;
     const threshold = VOICE_MATCH_THRESHOLDS[this.deps.settings().sensitivity];
-    const notYourVoice = voiceMatch !== null && voiceMatch < threshold;
+    // A bare "Hey Aida" is too short to judge: it wakes Aida, and the command is checked instead.
+    const bareWake = wake !== null && !wake.command && !utterance.cut;
+    const unverified = bareWake && voiceMatch !== null && voiceMatch < threshold;
+    const notYourVoice = voiceMatch !== null && voiceMatch < threshold && !bareWake;
     heardAs.sttMs = Math.round(performance.now() - heardAt);
     heardAs.words = text.split(/\s+/).filter(Boolean).length;
     if (!expectingCommand) heardAs.wakeMatched = wake !== null;
@@ -477,6 +499,17 @@ export class VoiceController {
 
     let command: string;
     if (expectingCommand) {
+      const score = commandVoice ? await commandVoice : null;
+      if (score !== null) {
+        heardAs.voiceScore = Math.round(score * 100) / 100;
+        heardAs.threshold = threshold;
+        if (score < threshold) {
+          note('rejected: voice');
+          this.deps.overlay({ phase: 'error', text: "That didn't sound like you." }, 2500);
+          this.toIdle(true);
+          return;
+        }
+      }
       // "Hey Aida" said again while she is already listening isn't part of the command.
       const again = matchWakePhrase(text, { fuzzy: this.fuzzy() });
       if (again && !again.command && !this.commandPrefix) {
@@ -511,6 +544,7 @@ export class VoiceController {
         note('wake only');
         this.stopSpeaking();
         this.armCommand();
+        this.unverifiedWake = unverified ? samples : null;
         return;
       }
       command = wake.command;
@@ -525,6 +559,7 @@ export class VoiceController {
     }
 
     note('accepted');
+    this.unverifiedWake = null;
     this.stopSpeaking();
     const sttMs = performance.now() - heardAt;
     const trace = this.deps.tracer?.start('voice', sttMs);
@@ -665,6 +700,7 @@ export class VoiceController {
   private toIdle(keepOverlay = false): void {
     this.phase = 'idle';
     this.commandPrefix = '';
+    this.unverifiedWake = null;
     this.clearPrefixTimer();
     this.deps.duck?.(false);
     this.deps.setState(null);

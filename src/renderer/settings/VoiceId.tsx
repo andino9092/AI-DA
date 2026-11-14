@@ -86,7 +86,7 @@ export function VoiceId({
     <div className="space-y-3 rounded-lg border border-zinc-200 px-3 py-3 dark:border-zinc-800">
       <Toggle
         label="Only respond to my voice"
-        hint="“Hey Aida” only counts in your voice, not other people, or videos and music on a speaker. Push-to-talk works for anyone. Your voiceprint is encrypted and stays on this PC."
+        hint="Commands after “Hey Aida” only run in your voice, not other people’s, or videos and music on a speaker. “Hey Aida” on its own is too short to tell voices apart, so it wakes Aida for anyone, and the command that follows is checked. Push-to-talk works for anyone. Your voiceprint is encrypted and stays on this PC."
         checked={voice.onlyMyVoice}
         onChange={(v) => update({ voice: { ...voice, onlyMyVoice: v } })}
       />
