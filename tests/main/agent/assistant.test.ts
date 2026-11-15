@@ -442,6 +442,94 @@ describe('Assistant: replies after several passes', () => {
   });
 });
 
+describe('Assistant: next_step', () => {
+  const next = (id: string) => ({ id, name: 'next_step', args: {} });
+  const MULTI = 'get Discord and VS Code up for me and drop the volume to 20';
+
+  it('lets a model that takes one step per pass finish a three-step request', async () => {
+    const groq = new FakeProvider('groq', [
+      {
+        text: '',
+        toolCalls: [{ id: 'a', name: 'open_app', args: { name: 'Discord' } }, next('n1')],
+      },
+      {
+        text: '',
+        toolCalls: [
+          { id: 'b', name: 'open_app', args: { name: 'Visual Studio Code' } },
+          next('n2'),
+        ],
+      },
+      { text: '', toolCalls: [{ id: 'c', name: 'set_volume', args: { level: 20 } }] },
+    ]);
+    const t = setup({ providers: [groq] });
+    const reply = await t.run(MULTI);
+    // Discord is already running, so its window is brought forward; VS Code is launched.
+    expect(t.win.actions).toEqual([{ handle: 3, action: 'focus' }]);
+    expect(t.launched).toEqual(['Microsoft.VisualStudioCode']);
+    expect(t.win.volume.level).toBe(20);
+    expect(groq.requests).toHaveLength(3);
+    expect(reply).not.toMatch(/continue|next.step/i);
+    // Not an action: no "Running next step…" line in the UI.
+    const statuses = t.events.flatMap((e) => (e.type === 'status' ? [e.text] : []));
+    expect(statuses.filter((s) => /next.step/i.test(s))).toEqual([]);
+    expect(statuses).toContain('Running open app…');
+  });
+
+  it('still stops after one request when the model does not call it', async () => {
+    const groq = new FakeProvider('groq', [
+      { text: '', toolCalls: [{ id: 'a', name: 'open_app', args: { name: 'Discord' } }] },
+    ]);
+    const t = setup({ providers: [groq] });
+    expect(await t.run(MULTI)).toBe('Opening Discord.');
+    expect(groq.requests).toHaveLength(1);
+  });
+
+  it('is offered on every request, and its result is fed back to the model', async () => {
+    const groq = new FakeProvider('groq', [
+      {
+        text: '',
+        toolCalls: [{ id: 'a', name: 'open_app', args: { name: 'Discord' } }, next('n1')],
+      },
+      { text: 'Discord is up and the volume is fine.', toolCalls: [] },
+    ]);
+    const t = setup({ providers: [groq] });
+    expect(await t.run(MULTI)).toBe('Discord is up and the volume is fine.');
+    for (const request of groq.requests) {
+      const spec = request.tools.find((s) => s.name === 'next_step');
+      expect(spec?.parameters).toEqual({ type: 'object', properties: {} });
+    }
+    expect(groq.requests[1]!.messages.at(-1)).toMatchObject({
+      role: 'tool',
+      results: [
+        { id: 'a', name: 'open_app' },
+        { id: 'n1', name: 'next_step', content: expect.stringContaining('"ok":true') },
+      ],
+    });
+  });
+
+  it('continues on a reply with only next_step, up to the step limit', async () => {
+    const groq = new FakeProvider(
+      'groq',
+      Array.from({ length: 8 }, (_, i) => ({ text: '', toolCalls: [next(`n${i}`)] })),
+    );
+    const t = setup({ providers: [groq] });
+    expect(await t.run('sort everything out for me')).toBe(
+      "I couldn't finish that in a reasonable number of steps.",
+    );
+    expect(groq.requests).toHaveLength(5);
+  });
+
+  it('never speaks its own result', async () => {
+    const groq = new FakeProvider('groq', [
+      { text: '', toolCalls: [next('n1')] },
+      { text: '', toolCalls: [{ id: 'c', name: 'set_volume', args: { level: 20 } }] },
+    ]);
+    const t = setup({ providers: [groq] });
+    expect(await t.run('sort the sound out for me')).toBe('Volume set to 20%.');
+    expect(groq.requests).toHaveLength(2);
+  });
+});
+
 describe('Privacy: nothing sensitive reaches a provider or a log', () => {
   const CORPUS = [
     '4111 1111 1111 1111',
