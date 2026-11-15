@@ -318,6 +318,130 @@ describe('Assistant: LLM path', () => {
   });
 });
 
+describe('Assistant: replies after several passes', () => {
+  it('says the actions of every pass, in the order they ran', async () => {
+    const gemini = new FakeProvider('gemini', [
+      {
+        text: '',
+        toolCalls: [
+          { id: 'a', name: 'media_control', args: { action: 'pause' } },
+          { id: 'm', name: 'more_tools', args: { groups: ['audio'] } },
+        ],
+      },
+      {
+        text: '',
+        toolCalls: [{ id: 'b', name: 'set_app_volume', args: { app: 'Discord', muted: true } }],
+      },
+    ]);
+    const t = setup({ providers: [gemini] });
+    // "Added tools for: …" is for the model, so it is not part of the reply.
+    expect(await t.run('silence Discord and stop whatever song is on')).toBe(
+      'Paused. Muted Discord.',
+    );
+    expect(gemini.requests).toHaveLength(2);
+    expect(t.win.mediaCommands).toEqual([{ action: 'pause', app: undefined }]);
+    expect(t.win.appVolumes.find((a) => a.process === 'Discord')!.muted).toBe(true);
+  });
+
+  it('leaves out a look-up made on the way to an action', async () => {
+    const gemini = new FakeProvider('gemini', [
+      { text: '', toolCalls: [{ id: 'a', name: 'list_windows', args: {} }] },
+      {
+        text: '',
+        toolCalls: [
+          { id: 'b', name: 'window_action', args: { action: 'minimize', target: 'Discord' } },
+        ],
+      },
+    ]);
+    const t = setup({ providers: [gemini] });
+    expect(await t.run('hide the chat window')).toBe('Minimized Discord.');
+    expect(t.win.actions).toEqual([{ handle: 3, action: 'minimize' }]);
+  });
+
+  it('leaves out a failed attempt when the retry works', async () => {
+    const gemini = new FakeProvider('gemini', [
+      {
+        text: '',
+        toolCalls: [
+          { id: 'a', name: 'window_action', args: { action: 'minimize', target: 'the chat' } },
+        ],
+      },
+      {
+        text: '',
+        toolCalls: [
+          { id: 'b', name: 'window_action', args: { action: 'minimize', target: 'Discord' } },
+        ],
+      },
+    ]);
+    const t = setup({ providers: [gemini] });
+    expect(await t.run('hide the chat window')).toBe('Minimized Discord.');
+    expect(gemini.requests).toHaveLength(2);
+  });
+
+  it('keeps an action that worked when another in the same pass failed', async () => {
+    const gemini = new FakeProvider('gemini', [
+      {
+        text: '',
+        toolCalls: [
+          { id: 'a', name: 'media_control', args: { action: 'pause' } },
+          { id: 'b', name: 'window_action', args: { action: 'minimize', target: 'the chat' } },
+        ],
+      },
+      {
+        text: '',
+        toolCalls: [
+          { id: 'c', name: 'window_action', args: { action: 'minimize', target: 'Discord' } },
+        ],
+      },
+    ]);
+    const t = setup({ providers: [gemini] });
+    expect(await t.run('stop the music and hide the chat window')).toBe(
+      'Paused. Minimized Discord.',
+    );
+  });
+
+  it("uses the model's own words when it ends with text", async () => {
+    const gemini = new FakeProvider('gemini', [
+      {
+        text: '',
+        toolCalls: [
+          { id: 'a', name: 'media_control', args: { action: 'pause' } },
+          { id: 'b', name: 'list_windows', args: {} },
+        ],
+      },
+      { text: 'I paused the music. Discord is still open.', toolCalls: [] },
+    ]);
+    const t = setup({ providers: [gemini] });
+    expect(await t.run('stop the music and tell me if discord is open')).toBe(
+      'I paused the music. Discord is still open.',
+    );
+  });
+
+  it('says what was done when the model ends without any text', async () => {
+    const gemini = new FakeProvider('gemini', [
+      {
+        text: '',
+        toolCalls: [
+          { id: 'a', name: 'media_control', args: { action: 'pause' } },
+          { id: 'b', name: 'list_windows', args: {} },
+        ],
+      },
+      { text: '', toolCalls: [] },
+    ]);
+    const t = setup({ providers: [gemini] });
+    expect(await t.run('stop the music and check the windows')).toBe('Paused.');
+  });
+
+  it('still says "Done." when the model ends without text and nothing was done', async () => {
+    const gemini = new FakeProvider('gemini', [
+      { text: '', toolCalls: [{ id: 'a', name: 'list_windows', args: {} }] },
+      { text: '', toolCalls: [] },
+    ]);
+    const t = setup({ providers: [gemini] });
+    expect(await t.run('check the windows')).toBe('Done.');
+  });
+});
+
 describe('Privacy: nothing sensitive reaches a provider or a log', () => {
   const CORPUS = [
     '4111 1111 1111 1111',

@@ -348,6 +348,10 @@ export class Assistant {
       ),
     );
 
+    // What each action of this request said, over every pass, in the order they ran. A request
+    // that takes several passes reports all of it, not only the last pass's part.
+    const spoken: string[] = [];
+
     for (let step = 0; step < MAX_STEPS; step++) {
       const missing = groups ? GROUP_NAMES.filter((g) => !groups.has(g)) : [];
       const tools = registry.specs((name) => isSelected(name, groups));
@@ -366,7 +370,8 @@ export class Assistant {
         raw: response.raw,
       });
 
-      if (response.toolCalls.length === 0) return response.text || 'Done.';
+      // The model has seen every result, so its own words win; without any, say what was done.
+      if (response.toolCalls.length === 0) return response.text || spoken.join(' ') || 'Done.';
 
       const results: { id: string; name: string; result: ToolResult }[] = [];
       for (const call of response.toolCalls) {
@@ -408,10 +413,13 @@ export class Assistant {
       });
 
       if (results.some((r) => r.result.cancelled)) return "Okay, I won't do that.";
-      // Tools already know what to say; skip the extra round trip unless the model needs to look.
-      if (results.every((r) => r.result.ok && !r.result.followUp)) {
-        return results.map((r) => r.result.speak).join(' ');
+      // Only actions that worked are said aloud. A result marked followUp is something the model
+      // was asked to read (a list, a failure, the more_tools acknowledgement), not something to say.
+      for (const { result } of results) {
+        if (result.ok && !result.followUp) spoken.push(result.speak);
       }
+      // Tools already know what to say; skip the extra round trip unless the model needs to look.
+      if (results.every((r) => r.result.ok && !r.result.followUp)) return spoken.join(' ');
       emit({ type: 'status', requestId: ctx.requestId, text: 'Thinking…' });
     }
     return "I couldn't finish that in a reasonable number of steps.";
