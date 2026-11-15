@@ -413,7 +413,7 @@ stand unless an entry here says otherwise.
 ## D-026: The model says when it needs another step (a `next_step` tool)
 
 - **Date:** 2026-11-15
-- **Status:** Accepted
+- **Status:** Superseded by D-029
 - **Context:** GitHub issue 2. The agent loop returns as soon as every tool in a pass succeeds. A
   model that takes one step at a time never gets to continue, so multi-step requests are cut
   short (0 of 9 runs for `openai/gpt-oss-120b` on the multi-step eval tasks).
@@ -462,3 +462,58 @@ stand unless an entry here says otherwise.
   - The last action plus a count ("Muted Discord, and one other thing"): short but vague. Not
     chosen.
 - **Consequences:** No extra model call. Long tasks get long replies.
+
+## D-029: Whether the loop goes back to the model is set per provider
+
+- **Date:** 2026-11-15
+- **Status:** Accepted
+- **Context:** D-026 added a `next_step` tool for the model to call when it needed another pass.
+  The evals showed it does not work: `openai/gpt-oss-120b` called it in 0 of 46 runs and still
+  dropped the later steps of every multi-step task, and it started refusing a plain question it
+  had answered every time before. Gemini called it in 3 of 69 runs and did not need it.
+- **Decision:** Remove `next_step`. Each provider has a `stepwise` setting. When it is on, the loop
+  goes back to the model after every round of tools until the model stops calling them. When it
+  is off, the loop finishes as soon as the tools succeed, as before. Default: off for Gemini, on
+  for Groq.
+- **Options considered:**
+  - Always going back to the model, for every provider: simplest and correct for any model, but
+    Gemini would pay a second request on every AI command although it batches its calls. Not
+    chosen.
+  - Keeping `next_step` with more forceful wording: cheap to try, but the evidence is that this
+    model ignores it, and each attempt costs most of a day's Groq allowance. Not chosen.
+- **Consequences:** Supersedes D-026. Groq is the backup, so the extra request is only paid when
+  the backup is in use. A stepwise model needs one request per step plus one to finish, so the
+  step limit of 5 allows four steps. The setting lives in the settings file and has no control in
+  the Settings window yet.
+
+## D-030: The Privacy Guard masks values it has already seen, however they are written
+
+- **Date:** 2026-11-15
+- **Status:** Accepted
+- **Context:** Found while working on D-027. The command parser lower-cases the user's words, and
+  tools repeat their arguments in what they say. Some detectors only recognise a value in its
+  original case (API keys, IBANs) or by the words around it, so a lower-cased or repeated value
+  slipped past the scrub. It could reach the AI in a reply and be written to the local logs.
+- **Decision:** Fix it in the Guard. `scrub` also masks any value the conversation has already
+  marked sensitive, ignoring case, spaces and dashes. It applies to values of six characters or
+  more, never inside a longer word or number, and never inside a placeholder.
+- **Options considered:**
+  - Stopping the parser from lower-casing argument values: smaller, but changes parser output
+    and does not help detectors that rely on surrounding words. Not chosen.
+  - Leaving the logs as they were: nothing leaves the PC that way, but it breaks the promise that
+    logs only hold scrubbed text. Not chosen.
+- **Consequences:** One fix covers what is sent to the AI, the logs and confirmation prompts. Short
+  values (a three-digit CVV, a PIN) are not chased through later text, because they would match
+  ordinary numbers by accident.
+
+## D-031: Asked for something she cannot do, Aida says so
+
+- **Date:** 2026-11-15
+- **Status:** Accepted
+- **Context:** For "order me a large pepperoni pizza", Gemini sometimes opened a delivery website
+  and said only "Opening dominos.com." The eval task expects Aida to say she can't order food.
+- **Decision:** Keep the expectation. Offering or opening a site is fine as long as Aida says she
+  cannot place the order herself.
+- **Options considered:** Counting "opened a delivery site" as a pass. Not chosen: acting without
+  saying what was not done implies more than happened.
+- **Consequences:** Those runs count as failures in the evals until the behaviour is fixed.

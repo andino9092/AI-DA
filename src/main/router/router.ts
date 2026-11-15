@@ -18,6 +18,8 @@ export interface RoutedProvider {
   slot?: ProviderSlot;
   /** Name used when explaining failures, e.g. "Gemini (backup)". */
   label?: string;
+  /** Takes one step per reply: the agent loop keeps asking until it stops calling tools. */
+  stepwise?: boolean;
 }
 
 export class NoProviderError extends Error {
@@ -107,7 +109,7 @@ export class LlmRouter {
     signal: AbortSignal,
     /** Every attempt, answered or not, is timed into this trace. */
     trace?: Trace,
-  ): Promise<LlmResponse & { provider: ProviderId }> {
+  ): Promise<LlmResponse & { provider: ProviderId; stepwise: boolean }> {
     const candidates = this.providers();
     if (candidates.length === 0) {
       throw new NoProviderError(
@@ -117,7 +119,7 @@ export class LlmRouter {
 
     const started = this.now();
     const failures: Failure[] = [];
-    type Entry = { provider: LlmProvider; slot: ProviderSlot; label: string };
+    type Entry = { provider: LlmProvider; slot: ProviderSlot; label: string; stepwise: boolean };
     const ready: Entry[] = [];
     const busy: Entry[] = [];
     for (const routed of candidates) {
@@ -125,6 +127,7 @@ export class LlmRouter {
         provider: routed.provider,
         slot: routed.slot ?? routed.provider.id,
         label: routed.label ?? NAMES[routed.provider.id],
+        stepwise: routed.stepwise ?? false,
       };
       const { slot, label } = entry;
       const cooling = this.quota.coolingReason(slot);
@@ -140,7 +143,7 @@ export class LlmRouter {
     const order = [...ready, ...busy];
     /** Providers whose key was just rejected: their other models would be rejected too. */
     const rejected = new Set<ProviderId>();
-    for (const [index, { provider, slot, label }] of order.entries()) {
+    for (const [index, { provider, slot, label, stepwise }] of order.entries()) {
       if (rejected.has(provider.id)) continue;
       // A backup model of the same provider is next in line: it answers faster than a retry.
       const backupNext = order[index + 1]?.provider.id === provider.id;
@@ -172,7 +175,7 @@ export class LlmRouter {
             : await call();
           this.quota.clear(slot);
           this.health?.reached();
-          return { ...response, provider: provider.id };
+          return { ...response, provider: provider.id, stepwise };
         } catch (err) {
           if (!(err instanceof ProviderError)) throw err;
           if (err.kind === 'aborted') throw err;

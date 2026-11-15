@@ -23,6 +23,34 @@ describe('PrivacyGuard', () => {
     expect(findings.map((f) => f.kind)).toEqual(['CARD', 'CVV', 'PASSWORD']);
   });
 
+  it('masks a value it has already seen, however it is written later', () => {
+    const session = new PlaceholderSession();
+    guard.scrub('open AKIAIOSFODNN7EXAMPLE and pay GB82WEST12345698765432', session);
+    // Lower-cased by the command parser, or repeated by a tool: no detector matches these.
+    expect(guard.scrub("I couldn't find an app called akiaiosfodnn7example.", session).text).toBe(
+      "I couldn't find an app called [API_KEY_1].",
+    );
+    expect(guard.scrub('sent to gb82 west 1234-5698 765432', session).text).toBe(
+      'sent to [IBAN_1]',
+    );
+    // A different conversation has not seen them, so nothing is assumed.
+    expect(guard.scrub('akiaiosfodnn7example', new PlaceholderSession()).text).toBe(
+      'akiaiosfodnn7example',
+    );
+  });
+
+  it('leaves short values, longer words and placeholders alone when masking by memory', () => {
+    const session = new PlaceholderSession();
+    guard.scrub('my cvv is 123 and my password is ACCOUNT', session);
+    // A three-digit CVV is too short to chase through later text.
+    expect(guard.scrub('set the volume to 123', session).text).toBe('set the volume to 123');
+    // "account" inside a longer word, and inside a placeholder, is not the password.
+    expect(guard.scrub('open my accounting app', session).text).toBe('open my accounting app');
+    expect(guard.scrub('use [ACCOUNT_1] here', session).text).toBe('use [ACCOUNT_1] here');
+    // On its own it is.
+    expect(guard.scrub('type account now', session).text).toBe('type [PASSWORD_1] now');
+  });
+
   it('reuses the same placeholder for the same value across messages', () => {
     const session = new PlaceholderSession();
     guard.scrub('card 4111-1111-1111-1111', session);

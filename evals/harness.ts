@@ -45,6 +45,8 @@ export interface PacingOptions {
   minIntervalMs?: number;
   /** How often to wait and try again after "rate limited" or "overloaded". */
   retries?: number;
+  /** The model takes one step per reply (D-029); the app sets this per provider. */
+  stepwise?: boolean;
   sleep?: (ms: number) => Promise<void>;
 }
 
@@ -70,6 +72,10 @@ export class MeteredProvider implements LlmProvider {
 
   get model() {
     return this.inner.model;
+  }
+
+  get stepwise() {
+    return this.options.stepwise ?? false;
   }
 
   /** The run whose numbers the next requests count toward. */
@@ -179,6 +185,7 @@ export async function runTask(
     llmMs: 0,
     toolsOffered: [],
     sent: [],
+    stepwise: provider?.stepwise ?? false,
   };
 
   try {
@@ -215,7 +222,10 @@ export async function runTask(
       log,
     );
     const router = new LlmRouter(
-      () => (provider ? [{ provider, dailyLimit: Number.MAX_SAFE_INTEGER }] : []),
+      () =>
+        provider
+          ? [{ provider, dailyLimit: Number.MAX_SAFE_INTEGER, stepwise: provider.stepwise }]
+          : [],
       new QuotaTracker(join(dir, 'quota.json')),
       outbound,
       undefined,

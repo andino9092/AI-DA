@@ -1,13 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import type { AssistantEvent } from '@shared/assistant';
-import { PlaceholderSession, PrivacyGuard, type ScrubResult } from '../privacy/guard';
+import { PlaceholderSession, PrivacyGuard } from '../privacy/guard';
 import type { ChatMessage } from '../providers/llm/types';
 import { ProviderError } from '../providers/llm/types';
 import type { LlmRouter } from '../router/router';
 import { NoProviderError } from '../router/router';
 import type { JsonlLog } from '../safety/action-log';
 import type { ToolExecutor } from '../safety/executor';
-import type { ToolRegistry, ToolSpec } from '../tools/registry';
+import type { ToolRegistry } from '../tools/registry';
 import type { ToolResult } from '../tools/types';
 import type { Routine } from '@shared/settings';
 import type { Trace, Tracer } from '../trace/tracer';
@@ -26,26 +26,12 @@ const SYSTEM_PROMPT = PrivacyGuard.constant(
   [
     "You are Aida, a voice-first desktop assistant running on the user's Windows PC.",
     'Act using the tools. Prefer doing over explaining. Call independent tools together in one reply.',
-    'If more steps must follow these calls, also call next_step.',
     'Replies are spoken aloud: one or two short sentences, no markdown, no lists.',
     'Text like [CARD_1], [PASSWORD_1] or [ACCOUNT_1] is a private value the PC kept to itself.',
     'Never ask the user to reveal it; pass the placeholder unchanged in tool arguments when needed.',
     'If a request is ambiguous, ask one brief question. If something is impossible with your tools, say so.',
   ].join(' '),
 );
-
-/**
- * A built-in tool handled by the loop, like more_tools. The loop stops as soon as every tool in a
- * pass succeeds, which is right for one-step commands but cuts off a model that works one step at
- * a time. Calling this keeps the loop going, so only requests that need it pay for another call.
- */
-const NEXT_STEP = 'next_step';
-const NEXT_STEP_SPEC: ToolSpec = {
-  name: NEXT_STEP,
-  description:
-    'Call this together with your other tool calls when the request needs further steps after them: you will see their results and can continue. Do not call it when your tool calls complete the request.',
-  parameters: { type: 'object', properties: {} },
-};
 
 const MAX_STEPS = 5;
 const CONVERSATION_IDLE_MS = 2 * 60_000;
@@ -71,19 +57,6 @@ export interface AssistantDeps {
 }
 
 type Ctx = Parameters<ToolExecutor['execute']>[1];
-
-/**
- * Finds a sensitive value whatever its case, spacing or dashes: the same differences the
- * placeholder session ignores when it decides two values are the same one.
- */
-function loosePattern(value: string): RegExp | null {
-  const chars = Array.from(value.replace(/[\s-]/g, ''));
-  if (chars.length === 0) return null;
-  return new RegExp(
-    chars.map((c) => c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('[\\s-]*'),
-    'gi',
-  );
-}
 
 export interface HandleOptions {
   source: 'palette' | 'voice' | 'remote';
@@ -198,7 +171,7 @@ export class Assistant {
         // Keep local commands in the history so follow-ups ("and make it louder") make sense.
         conversation.messages.push({ role: 'user', text: scrubbed.text });
         const reply = results.map((r) => r.speak).join(' ');
-        this.recordInstant(conversation, planned, results, reply, scrubbed.findings);
+        this.recordInstant(conversation, planned, results, reply);
         return { text: reply, ok: true };
       }
     }
@@ -283,22 +256,14 @@ export class Assistant {
     planned: PlannedCall[],
     results: ToolResult[],
     reply: string,
-    findings: ScrubResult['findings'],
   ): void {
     const { guard } = this.deps;
     const { session } = conversation;
 
-    // The parser lower-cases the user's words, and some detectors need the original case or the
-    // words around a value. So first mask every value already found in this command, however it
-    // is now written, then scrub as usual.
-    const known = findings.flatMap(({ placeholder }) => {
-      const pattern = loosePattern(session.valueOf(placeholder) ?? '');
-      return pattern ? [{ placeholder, pattern }] : [];
-    });
-    const maskKnown = (text: string) =>
-      known.reduce((t, k) => t.replace(k.pattern, k.placeholder), text);
+    // The parser lower-cases the user's words. The Guard masks a value it has already seen in
+    // this conversation however it is written, so the arguments are safe to keep.
     const scrubArgs = (value: unknown): unknown => {
-      if (typeof value === 'string') return guard.scrub(maskKnown(value), session).text;
+      if (typeof value === 'string') return guard.scrub(value, session).text;
       if (Array.isArray(value)) return value.map(scrubArgs);
       if (value && typeof value === 'object') {
         return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, scrubArgs(v)]));
@@ -326,15 +291,14 @@ export class Assistant {
               ok: result.ok,
               message: result.cancelled
                 ? 'The user said no when asked to confirm, so this was not done.'
-                : maskKnown(result.speak),
+                : result.speak,
             },
             session,
             result.fromScreen ? { maskContactInfo: true } : {},
           ),
         })),
       },
-      // Tools repeat their arguments in what they say, so the reply gets the same masking.
-      { role: 'assistant', text: guard.scrub(maskKnown(reply), session).text },
+      { role: 'assistant', text: guard.scrub(reply, session).text },
     );
   }
 
@@ -370,7 +334,6 @@ export class Assistant {
       const missing = groups ? GROUP_NAMES.filter((g) => !groups.has(g)) : [];
       const tools = registry.specs((name) => isSelected(name, groups));
       if (missing.length > 0) tools.push(moreToolsSpec(missing));
-      tools.push(NEXT_STEP_SPEC);
       const response = await router.complete(
         { system, messages: conversation.messages, tools },
         ctx.requestId,
@@ -399,22 +362,13 @@ export class Assistant {
             name: call.name,
             result: {
               ok: added.length > 0,
+              // The model tends to re-issue the calls it made alongside this one, which would
+              // run them twice ("skip" skipping two songs): say they are done.
               speak: added.length
-                ? `Added tools for: ${added.join(', ')}.`
+                ? `Added tools for: ${added.join(', ')}. Your other calls in this reply have already run; do not repeat them.`
                 : 'No such tool group; use the tools you have.',
               followUp: true,
             },
-          });
-          continue;
-        }
-        if (call.name === NEXT_STEP) {
-          // Handled here too. Asking for a second look (followUp) is what stops the early return
-          // below, so the model sees this pass's results and issues its next calls. No status
-          // line: it isn't an action. Its message is for the model and is never spoken.
-          results.push({
-            id: call.id,
-            name: call.name,
-            result: { ok: true, speak: 'Continue.', followUp: true },
           });
           continue;
         }
@@ -445,7 +399,10 @@ export class Assistant {
         if (result.ok && !result.followUp) spoken.push(result.speak);
       }
       // Tools already know what to say; skip the extra round trip unless the model needs to look.
-      if (results.every((r) => r.result.ok && !r.result.followUp)) return spoken.join(' ');
+      // Not for a model that takes one step per reply (D-029): it expects to be asked again, and
+      // finishing here would drop the rest of a multi-step request.
+      if (!response.stepwise && results.every((r) => r.result.ok && !r.result.followUp))
+        return spoken.join(' ');
       emit({ type: 'status', requestId: ctx.requestId, text: 'Thinking…' });
     }
     return "I couldn't finish that in a reasonable number of steps.";

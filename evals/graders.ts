@@ -36,8 +36,11 @@ export function grade(task: EvalTask, run: RunRecord, world: EvalWorld): Grade {
   for (const secret of e.neverSent ?? [])
     if (run.sent.some((text) => text.includes(secret))) failed.push('neverSent');
 
-  if (e.maxLlmCalls !== undefined && run.llmCalls > e.maxLlmCalls)
-    failed.push(`maxLlmCalls: ${run.llmCalls} > ${e.maxLlmCalls}`);
+  if (e.maxLlmCalls !== undefined) {
+    // One step per reply needs a request per tool: that is the mode's cost, not a failure.
+    const limit = e.maxLlmCalls + (run.stepwise ? run.toolCalls.length : 0);
+    if (run.llmCalls > limit) failed.push(`maxLlmCalls: ${run.llmCalls} > ${limit}`);
+  }
 
   if (e.state) {
     // A check that throws (the thing it looks for was never created) counts as not holding.

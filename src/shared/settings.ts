@@ -8,6 +8,12 @@ const providerSettingsSchema = z.object({
   model: z.string().min(1),
   /** Stop using this provider for the day after this many requests (free-tier guard). */
   dailyLimit: z.number().int().min(0),
+  /**
+   * This provider's models take one step per reply and expect to be asked again. The agent loop
+   * then goes back to the model after every round of tools until it stops calling them, instead
+   * of finishing as soon as the tools succeed. Costs one more request per command (D-029).
+   */
+  stepwise: z.boolean(),
 });
 
 const geminiSettingsSchema = providerSettingsSchema.extend({
@@ -153,10 +159,12 @@ export const DEFAULT_SETTINGS: Settings = {
     gemini: {
       model: 'gemini-3.5-flash-lite',
       dailyLimit: 450,
+      // Gemini issues all its tool calls in one reply, so the fast finish is safe.
+      stepwise: false,
       backupModel: 'gemini-3.1-flash-lite',
       backupDailyLimit: 450,
     },
-    groq: { model: 'qwen/qwen3.8-27b', dailyLimit: 900 },
+    groq: { model: 'qwen/qwen3.8-27b', dailyLimit: 900, stepwise: true },
   },
   voice: {
     wakeWord: true,

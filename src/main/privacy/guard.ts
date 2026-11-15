@@ -11,6 +11,21 @@ export type ScrubbedText = string & { readonly [scrubbedBrand]: true };
 
 const PLACEHOLDER_PATTERN = /\[([A-Z_]+)_(\d+)\]/g;
 
+/** Shorter values (a CVV, a PIN) are too likely to match ordinary text by accident. */
+const MIN_LOOSE_LENGTH = 6;
+
+/**
+ * Finds a value whatever its case, spacing or dashes: the same differences the placeholder
+ * session ignores when it decides two values are the same one. Not inside a longer word or
+ * number, and not inside a placeholder.
+ */
+function loosePattern(value: string): RegExp | null {
+  const chars = Array.from(value.replace(/[\s-]/g, ''));
+  if (chars.length < MIN_LOOSE_LENGTH) return null;
+  const body = chars.map((c) => c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('[\\s-]*');
+  return new RegExp(`(?<![A-Za-z0-9[])${body}(?![A-Za-z0-9_\\]])`, 'gi');
+}
+
 /**
  * Remembers which placeholder stands for which value during one conversation, so the same card
  * number is always `[CARD_1]` and tool arguments can be filled back in locally.
@@ -34,6 +49,13 @@ export class PlaceholderSession {
 
   valueOf(placeholder: string): string | undefined {
     return this.byPlaceholder.get(placeholder);
+  }
+
+  /** Every value seen so far with its placeholder, longest first. */
+  entries(): { placeholder: string; value: string }[] {
+    return [...this.byPlaceholder.entries()]
+      .map(([placeholder, value]) => ({ placeholder, value }))
+      .sort((a, b) => b.value.length - a.value.length);
   }
 
   get size(): number {
@@ -75,7 +97,8 @@ export class PrivacyGuard {
     overrides: Partial<DetectOptions> = {},
   ): ScrubResult {
     const found = detectSensitive(text, { ...this.options(), ...overrides });
-    if (found.length === 0) return { text: text as ScrubbedText, findings: [] };
+    if (found.length === 0)
+      return { text: this.maskKnown(text, session) as ScrubbedText, findings: [] };
 
     let out = '';
     let last = 0;
@@ -86,7 +109,22 @@ export class PrivacyGuard {
       last = f.end;
       findings.push({ kind: f.kind, placeholder });
     }
-    return { text: (out + text.slice(last)) as ScrubbedText, findings };
+    return { text: this.maskKnown(out + text.slice(last), session) as ScrubbedText, findings };
+  }
+
+  /**
+   * Masks values this conversation has already marked sensitive, however they are written now.
+   * Detectors look at the original text: some need its case (API keys, IBANs) or the words
+   * around a value. Once a value has been lower-cased by the command parser, or repeated by a
+   * tool in its reply ("I couldn't find an app called akia…"), they no longer recognise it.
+   */
+  private maskKnown(text: string, session: PlaceholderSession): string {
+    let out = text;
+    for (const { placeholder, value } of session.entries()) {
+      const pattern = loosePattern(value);
+      if (pattern) out = out.replace(pattern, placeholder);
+    }
+    return out;
   }
 
   /** Scrubs every string inside a JSON-like value (tool results) and serialises it. */

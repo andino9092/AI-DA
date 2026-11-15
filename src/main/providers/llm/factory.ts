@@ -12,14 +12,19 @@ export function buildProvider(id: ProviderId, key: string, model: string): LlmPr
 }
 
 /** Every router slot the settings describe, in order, with its model and limit. */
-export function providerSlots(
-  llm: Settings['llm'],
-): { slot: ProviderSlot; id: ProviderId; label: string; model: string; dailyLimit: number }[] {
+export function providerSlots(llm: Settings['llm']): {
+  slot: ProviderSlot;
+  id: ProviderId;
+  label: string;
+  model: string;
+  dailyLimit: number;
+  stepwise: boolean;
+}[] {
   const out: ReturnType<typeof providerSlots> = [];
   for (const id of llm.order) {
     if (id === 'gemini') {
-      const { model, dailyLimit, backupModel, backupDailyLimit } = llm.gemini;
-      out.push({ slot: 'gemini', id, label: 'Gemini', model, dailyLimit });
+      const { model, dailyLimit, backupModel, backupDailyLimit, stepwise } = llm.gemini;
+      out.push({ slot: 'gemini', id, label: 'Gemini', model, dailyLimit, stepwise });
       // Right after the main model: a different model is rarely overloaded at the same moment.
       if (backupModel && backupModel !== model)
         out.push({
@@ -28,6 +33,7 @@ export function providerSlots(
           label: 'Gemini (backup)',
           model: backupModel,
           dailyLimit: backupDailyLimit,
+          stepwise,
         });
     } else {
       out.push({ slot: id, id, label: 'Groq', ...llm.groq });
@@ -48,7 +54,7 @@ export function createProviderSource(
 
   return () => {
     const out: RoutedProvider[] = [];
-    for (const { slot, id, label, model, dailyLimit } of providerSlots(settings().llm)) {
+    for (const { slot, id, label, model, dailyLimit, stepwise } of providerSlots(settings().llm)) {
       const key = vault.get(id);
       if (!key) continue;
       const signature = `${model}:${key}`;
@@ -57,7 +63,7 @@ export function createProviderSource(
         entry = { signature, provider: buildProvider(id, key, model) };
         cache.set(slot, entry);
       }
-      out.push({ provider: entry.provider, dailyLimit, slot, label });
+      out.push({ provider: entry.provider, dailyLimit, slot, label, stepwise });
     }
     return out;
   };

@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { it } from 'vitest';
 import { buildProvider } from '../src/main/providers/llm/factory';
 import type { ProviderId } from '../src/main/providers/llm/types';
+import { DEFAULT_SETTINGS } from '../src/shared/settings';
 import { grade } from './graders';
 import { MeteredProvider, runTask } from './harness';
 import { renderReport, type ModelResult, type TaskResult } from './report';
@@ -18,6 +19,8 @@ import type { EvalTask } from './types';
  *   EVAL_RUNS                      runs per task and model; default 3
  *   EVAL_FILTER                    only tasks whose id contains this text
  *   EVAL_INTERVAL_MS               shortest gap between requests to one model; default 4000
+ *
+ * Groq models run one step per reply and Gemini batches, as in the app's default settings.
  */
 
 const DEFAULT_MODELS =
@@ -43,7 +46,10 @@ function modelsUnderTest(notes: string[]): { label: string; provider: MeteredPro
     }
     out.push({
       label: spec.trim(),
-      provider: new MeteredProvider(buildProvider(id, key, model), { minIntervalMs: interval }),
+      provider: new MeteredProvider(buildProvider(id, key, model), {
+        minIntervalMs: interval,
+        stepwise: DEFAULT_SETTINGS.llm[id].stepwise,
+      }),
     });
   }
   return out;

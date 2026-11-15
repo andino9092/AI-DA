@@ -55,7 +55,10 @@ export interface Expectation {
   reply?: RegExp;
   /** Text that must never appear in anything sent to the model. */
   neverSent?: string[];
-  /** Most model round trips allowed across the whole task. */
+  /**
+   * Most model round trips allowed across the whole task, for a model that batches its tool
+   * calls. A stepwise model is allowed one more per tool it ran.
+   */
   maxLlmCalls?: number;
   /** The simulated PC must end up like this. */
   state?: (world: EvalWorld) => boolean;
@@ -105,6 +108,8 @@ export interface RunRecord {
   toolsOffered: string[][];
   /** Every request to the model as text, for the "never sent" rule. */
   sent: string[];
+  /** The model was run in one-step-per-reply mode, which costs a request per step. */
+  stepwise: boolean;
   /** Set when the run broke instead of finishing (provider down, harness error). */
   error?: string;
   /** Set when the provider refused the request because the model wrote an invalid tool call. */
