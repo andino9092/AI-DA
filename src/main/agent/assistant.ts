@@ -7,7 +7,7 @@ import type { LlmRouter } from '../router/router';
 import { NoProviderError } from '../router/router';
 import type { JsonlLog } from '../safety/action-log';
 import type { ToolExecutor } from '../safety/executor';
-import type { ToolRegistry } from '../tools/registry';
+import type { ToolRegistry, ToolSpec } from '../tools/registry';
 import type { ToolResult } from '../tools/types';
 import type { Routine } from '@shared/settings';
 import type { Trace, Tracer } from '../trace/tracer';
@@ -26,12 +26,26 @@ const SYSTEM_PROMPT = PrivacyGuard.constant(
   [
     "You are Aida, a voice-first desktop assistant running on the user's Windows PC.",
     'Act using the tools. Prefer doing over explaining. Call independent tools together in one reply.',
+    'If more steps must follow these calls, also call next_step.',
     'Replies are spoken aloud: one or two short sentences, no markdown, no lists.',
     'Text like [CARD_1], [PASSWORD_1] or [ACCOUNT_1] is a private value the PC kept to itself.',
     'Never ask the user to reveal it; pass the placeholder unchanged in tool arguments when needed.',
     'If a request is ambiguous, ask one brief question. If something is impossible with your tools, say so.',
   ].join(' '),
 );
+
+/**
+ * A built-in tool handled by the loop, like more_tools. The loop stops as soon as every tool in a
+ * pass succeeds, which is right for one-step commands but cuts off a model that works one step at
+ * a time. Calling this keeps the loop going, so only requests that need it pay for another call.
+ */
+const NEXT_STEP = 'next_step';
+const NEXT_STEP_SPEC: ToolSpec = {
+  name: NEXT_STEP,
+  description:
+    'Call this together with your other tool calls when the request needs further steps after them: you will see their results and can continue. Do not call it when your tool calls complete the request.',
+  parameters: { type: 'object', properties: {} },
+};
 
 const MAX_STEPS = 5;
 const CONVERSATION_IDLE_MS = 2 * 60_000;
@@ -272,6 +286,7 @@ export class Assistant {
       const missing = groups ? GROUP_NAMES.filter((g) => !groups.has(g)) : [];
       const tools = registry.specs((name) => isSelected(name, groups));
       if (missing.length > 0) tools.push(moreToolsSpec(missing));
+      tools.push(NEXT_STEP_SPEC);
       const response = await router.complete(
         { system, messages: conversation.messages, tools },
         ctx.requestId,
@@ -304,6 +319,17 @@ export class Assistant {
                 : 'No such tool group; use the tools you have.',
               followUp: true,
             },
+          });
+          continue;
+        }
+        if (call.name === NEXT_STEP) {
+          // Handled here too. Asking for a second look (followUp) is what stops the early return
+          // below, so the model sees this pass's results and issues its next calls. No status
+          // line: it isn't an action. Its message is for the model and is never spoken.
+          results.push({
+            id: call.id,
+            name: call.name,
+            result: { ok: true, speak: 'Continue.', followUp: true },
           });
           continue;
         }
