@@ -55,6 +55,18 @@ export interface VoiceSummary {
 export function summarizeVoice(heard: LoggedVoice[]): VoiceSummary;
 export function renderVoice(summary: VoiceSummary, days: number): string;
 export function readVoice(dir: string, days: number, now?: Date): LoggedVoice[];
+export interface HeardCommand {
+  at?: string;
+  heard: string;
+  routes: string[];
+  tools: { tool: string; ok: boolean; summary: string }[];
+  reply: string;
+  declined: number;
+}
+
+export function recentCommands(actions: Record<string, unknown>[], limit?: number): HeardCommand[];
+export function renderCommands(commands: HeardCommand[]): string;
+export function readActions(dir: string, days: number, now?: Date): Record<string, unknown>[];
 export function percentile(values: number[], p: number): number;
 export function summarize(traces: LoggedTrace[]): TraceSummary;
 export function render(summary: TraceSummary, days: number): string;

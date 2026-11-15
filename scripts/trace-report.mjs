@@ -323,6 +323,62 @@ export function readVoice(dir, days, now = new Date()) {
   );
 }
 
+/**
+ * What Aida heard and what she did with it, newest last, from the action log (which already
+ * holds each accepted command with sensitive values masked). Speech that was ignored is not in
+ * any log as text.
+ */
+export function recentCommands(actions, limit = 20) {
+  const byRequest = new Map();
+  for (const a of actions) {
+    if (!a.requestId) continue;
+    const c =
+      byRequest.get(a.requestId) ??
+      byRequest
+        .set(a.requestId, { at: a.ts, heard: '', routes: [], tools: [], reply: '', declined: 0 })
+        .get(a.requestId);
+    if (a.type === 'command') {
+      c.heard = a.text;
+      c.at = a.ts;
+    } else if (a.type === 'route') c.routes.push(a.route);
+    else if (a.type === 'tool') c.tools.push({ tool: a.tool, ok: a.ok, summary: a.summary });
+    else if (a.type === 'confirm' && !a.approved) c.declined++;
+    else if (a.type === 'reply') c.reply = a.text;
+    else if (a.type === 'error') c.reply = a.text;
+  }
+  return [...byRequest.values()].filter((c) => c.heard).slice(-limit);
+}
+
+/** @returns {string} the "what was heard" part of the report */
+export function renderCommands(commands) {
+  if (commands.length === 0) return 'No commands in the action log for these days.';
+  const lines = [`What Aida heard and did (last ${commands.length} commands, oldest first)`];
+  for (const c of commands) {
+    const time = String(c.at ?? '').slice(11, 19);
+    // The parser's attempt failed and the AI took over: both show up.
+    const local = c.tools.length > 0 && c.routes[0] === 'llm' && c.tools[0].ok === false;
+    const route = c.routes.includes('routine')
+      ? 'routine'
+      : c.routes.includes('llm')
+        ? local
+          ? 'instant failed, then AI'
+          : 'AI'
+        : 'instant';
+    lines.push('', `  ${time}  heard: "${c.heard}"`);
+    lines.push(`            handled by: ${route}`);
+    for (const t of c.tools)
+      lines.push(`            ${t.ok ? 'did' : 'FAILED'}: ${t.summary} (${t.tool})`);
+    if (c.declined) lines.push(`            you declined ${c.declined} confirmation(s)`);
+    lines.push(`            said: "${c.reply}"`);
+  }
+  return lines.join('\n');
+}
+
+/** Reads the action log lines of the last `days` days from a logs folder. */
+export function readActions(dir, days, now = new Date()) {
+  return readLog(dir, 'actions', days, now, (e) => typeof e.type === 'string');
+}
+
 function main() {
   const args = process.argv.slice(2);
   const option = (name) => {
@@ -334,6 +390,12 @@ function main() {
   const dir = option('--dir') ?? join(process.env.APPDATA ?? '', 'AI-DA', 'logs');
   console.log(render(summarize(readTraces(dir, days)), days));
   console.log(`\n${renderVoice(summarizeVoice(readVoice(dir, days)), days)}`);
+  // --heard [n]: also list the last n commands as transcribed, with what was done about them.
+  if (args.includes('--heard')) {
+    const count = Number(option('--heard'));
+    const commands = recentCommands(readActions(dir, days), count > 0 ? count : 20);
+    console.log(`\n${renderCommands(commands)}`);
+  }
   console.log(`\nRead from ${dir}`);
 }
 

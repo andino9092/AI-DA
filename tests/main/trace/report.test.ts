@@ -5,7 +5,9 @@ import {
   percentile,
   readTraces,
   readVoice,
+  recentCommands,
   render,
+  renderCommands,
   renderVoice,
   summarize,
   summarizeVoice,
@@ -206,6 +208,49 @@ describe('trace report', () => {
     expect(readVoice(dir, 7, new Date('2026-11-13T12:00:00Z'))).toEqual([
       { type: 'heard', mode: 'wake', outcome: 'not addressed' },
     ]);
+  });
+
+  it('lists what was heard and what was done about it', () => {
+    const commands = recentCommands([
+      {
+        ts: '2026-11-14T22:39:43.000Z',
+        type: 'command',
+        requestId: 'r1',
+        text: 'minimize zen and move spotify',
+      },
+      {
+        type: 'tool',
+        requestId: 'r1',
+        tool: 'window_action',
+        ok: false,
+        summary: 'minimize zen and move spotify',
+      },
+      { type: 'route', requestId: 'r1', route: 'llm' },
+      { type: 'tool', requestId: 'r1', tool: 'window_action', ok: true, summary: 'minimize zen' },
+      { type: 'reply', requestId: 'r1', text: 'Minimized Zen.' },
+      {
+        ts: '2026-11-14T22:40:00.000Z',
+        type: 'command',
+        requestId: 'r2',
+        text: 'close this court',
+      },
+      { type: 'confirm', requestId: 'r2', summary: 'Close this court', approved: false },
+      { type: 'route', requestId: 'r2', route: 'instant' },
+      { type: 'reply', requestId: 'r2', text: "Okay, I won't do that." },
+      { type: 'panic' },
+    ]);
+    expect(commands.map((c) => c.heard)).toEqual([
+      'minimize zen and move spotify',
+      'close this court',
+    ]);
+    const text = renderCommands(commands);
+    expect(text).toContain('22:39:43  heard: "minimize zen and move spotify"');
+    expect(text).toContain('handled by: instant failed, then AI');
+    expect(text).toContain('FAILED: minimize zen and move spotify (window_action)');
+    expect(text).toContain('did: minimize zen (window_action)');
+    expect(text).toContain('you declined 1 confirmation(s)');
+    expect(recentCommands(commands as never, 1)).toEqual([]);
+    expect(renderCommands([])).toMatch(/No commands/);
   });
 
   it('reads only recent trace files and skips broken lines', () => {
