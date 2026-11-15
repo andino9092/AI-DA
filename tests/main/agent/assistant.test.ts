@@ -468,7 +468,8 @@ describe('Assistant: next_step', () => {
     expect(t.launched).toEqual(['Microsoft.VisualStudioCode']);
     expect(t.win.volume.level).toBe(20);
     expect(groq.requests).toHaveLength(3);
-    expect(reply).not.toMatch(/continue|next.step/i);
+    // Every step is reported (D-028), and the next_step acknowledgement is not.
+    expect(reply).toBe('Opening Discord. Opening Visual Studio Code. Volume set to 20%.');
     // Not an action: no "Running next step…" line in the UI.
     const statuses = t.events.flatMap((e) => (e.type === 'status' ? [e.text] : []));
     expect(statuses.filter((s) => /next.step/i.test(s))).toEqual([]);

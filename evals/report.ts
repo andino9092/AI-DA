@@ -18,11 +18,14 @@ const avg = (values: number[]) =>
 /** Runs that broke before the model could answer are left out of pass rates. */
 const graded = (result: TaskResult) => result.runs.filter((r) => !r.run.error);
 
-function askedForMoreTools(run: RunRecord): boolean {
-  // A later request carries the earlier assistant turn; look for a more_tools call in it.
-  return run.sent.some((text) =>
-    /"role":"assistant"[^[]*"toolCalls":\[[^\]]*"more_tools"/.test(text),
-  );
+/**
+ * Whether the model called one of the loop's own tools (more_tools, next_step) during a run.
+ * They never reach the executor, so they aren't in the run's tool calls; a later request carries
+ * the earlier assistant turn, so look for the call there.
+ */
+function calledBuiltIn(run: RunRecord, tool: string): boolean {
+  const call = new RegExp(`"role":"assistant"[^[]*"toolCalls":\\[[^\\]]*"${tool}"`);
+  return run.sent.some((text) => call.test(text));
 }
 
 export function summarize(model: ModelResult) {
@@ -49,7 +52,9 @@ export function summarize(model: ModelResult) {
     outputTokens: avg(withModel.map((r) => r.run.outputTokens)),
     secondsPerCall: avg(withModel.map((r) => r.run.llmMs / r.run.llmCalls)) / 1000,
     toolsOffered: avg(withModel.map((r) => r.run.toolsOffered[0]?.length ?? 0)),
-    moreTools: withModel.filter((r) => askedForMoreTools(r.run)).length,
+    moreTools: withModel.filter((r) => calledBuiltIn(r.run, 'more_tools')).length,
+    // D-026 rests on models calling next_step when a request needs several passes.
+    nextStep: withModel.filter((r) => calledBuiltIn(r.run, 'next_step')).length,
     withModel: withModel.length,
   };
 }
@@ -67,8 +72,8 @@ export function renderReport(models: ModelResult[], startedAt: Date, notes: stri
 
   lines.push('## Summary', '');
   lines.push(
-    '| Model | Pass rate | Model calls per task | Tokens in / out per task | Seconds per call | Tools offered | Asked for more tools | Broken runs |',
-    '|---|---|---|---|---|---|---|---|',
+    '| Model | Pass rate | Model calls per task | Tokens in / out per task | Seconds per call | Tools offered | Asked for more tools | Asked for another step | Broken runs |',
+    '|---|---|---|---|---|---|---|---|---|',
   );
   for (const s of summaries) {
     const local = s.withModel === 0;
@@ -77,7 +82,9 @@ export function renderReport(models: ModelResult[], startedAt: Date, notes: stri
         local ? '–' : s.llmCalls.toFixed(1)
       } | ${local ? '–' : `${Math.round(s.inputTokens)} / ${Math.round(s.outputTokens)}`} | ${local ? '–' : s.secondsPerCall.toFixed(1)} | ${
         local ? '–' : s.toolsOffered.toFixed(0)
-      } | ${local ? '–' : `${s.moreTools}/${s.withModel}`} | ${s.broken} |`,
+      } | ${local ? '–' : `${s.moreTools}/${s.withModel}`} | ${
+        local ? '–' : `${s.nextStep}/${s.withModel}`
+      } | ${s.broken} |`,
     );
   }
 
