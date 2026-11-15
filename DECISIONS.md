@@ -409,3 +409,56 @@ stand unless an entry here says otherwise.
   belong to a process whose name matches the app, since an app can have hidden windows that are
   not its interface. "Open Chrome" with Chrome already open now brings it forward instead of
   opening another window. A launch is still not verified.
+
+## D-026: The model says when it needs another step (a `next_step` tool)
+
+- **Date:** 2026-11-15
+- **Status:** Accepted
+- **Context:** GitHub issue 2. The agent loop returns as soon as every tool in a pass succeeds. A
+  model that takes one step at a time never gets to continue, so multi-step requests are cut
+  short (0 of 9 runs for `openai/gpt-oss-120b` on the multi-step eval tasks).
+- **Decision:** Offer the model a small built-in tool, `next_step`, handled by the loop like
+  `more_tools`. A model that wants to see results before its next step calls it alongside its
+  tools, and the loop goes round again. Without it, the loop exits as before.
+- **Options considered:**
+  - Always going back to the model until it replies with no tool calls (the standard agent loop):
+    correct for every model and simplest, but a second model call on every AI command, which
+    halves how far Groq's roughly 50 requests a day go. Not chosen; it is the fallback if the
+    evals show models don't use `next_step` properly.
+  - Guessing from the request text ("and", "then"): needs nothing from the model, but misfires
+    both ways. Not chosen.
+- **Consequences:** Single-step commands keep their one-call speed. Correctness now depends on the
+  model calling `next_step` when it should, which the evals measure. Unblocks D-016.
+
+## D-027: Commands handled locally are recorded in the AI's history as real tool calls
+
+- **Date:** 2026-11-15
+- **Status:** Accepted
+- **Context:** GitHub issue 14. A command the instant parser handles appeared in the history sent
+  to the AI as a user message followed by a bare assistant sentence ("Opening Discord."), as if
+  saying it made it happen. Models imitate what they are shown.
+- **Decision:** Record a locally handled command in the same shape the AI's own actions have: the
+  tool call with its arguments, the tool result, then the spoken reply.
+- **Options considered:**
+  - A text note ("(done locally with open_app) Opening Discord."): cheapest, but still not the
+    shape real tool use has, and the model may imitate the note. Not chosen.
+  - Leaving local commands out of the history: nothing to imitate, but follow-ups such as "close
+    it again" lose their context. Not chosen.
+- **Consequences:** Roughly 50 to 100 more tokens of history per local command. The arguments and
+  results go through the Privacy Guard like everything else sent out. Tool groups used locally
+  now count as "already used" when tools are selected for the next AI request.
+
+## D-028: After several passes, Aida says every action in order
+
+- **Date:** 2026-11-15
+- **Status:** Accepted
+- **Context:** GitHub issue 3. When a request took more than one pass through the loop, only the
+  last pass's tool sentences were spoken ("Muted Discord." after also stopping the music).
+- **Decision:** Join the sentences of every action carried out across all passes, in order.
+  Look-ups made along the way (results the model was asked to read) are left out.
+- **Options considered:**
+  - Asking the model for a one-sentence summary: the most natural wording, but one more model
+    call on every multi-pass request, and it could misreport. Not chosen.
+  - The last action plus a count ("Muted Discord, and one other thing"): short but vague. Not
+    chosen.
+- **Consequences:** No extra model call. Long tasks get long replies.
