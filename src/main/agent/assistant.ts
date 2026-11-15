@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { AssistantEvent } from '@shared/assistant';
-import { PlaceholderSession, PrivacyGuard } from '../privacy/guard';
+import { PlaceholderSession, PrivacyGuard, type ScrubResult } from '../privacy/guard';
 import type { ChatMessage } from '../providers/llm/types';
 import { ProviderError } from '../providers/llm/types';
 import type { LlmRouter } from '../router/router';
@@ -11,7 +11,7 @@ import type { ToolRegistry } from '../tools/registry';
 import type { ToolResult } from '../tools/types';
 import type { Routine } from '@shared/settings';
 import type { Trace, Tracer } from '../trace/tracer';
-import { parseInstant } from './instant-parser';
+import { parseInstant, type PlannedCall } from './instant-parser';
 import { matchRoutine } from './routines';
 import {
   GROUP_NAMES,
@@ -57,6 +57,19 @@ export interface AssistantDeps {
 }
 
 type Ctx = Parameters<ToolExecutor['execute']>[1];
+
+/**
+ * Finds a sensitive value whatever its case, spacing or dashes: the same differences the
+ * placeholder session ignores when it decides two values are the same one.
+ */
+function loosePattern(value: string): RegExp | null {
+  const chars = Array.from(value.replace(/[\s-]/g, ''));
+  if (chars.length === 0) return null;
+  return new RegExp(
+    chars.map((c) => c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('[\\s-]*'),
+    'gi',
+  );
+}
 
 export interface HandleOptions {
   source: 'palette' | 'voice' | 'remote';
@@ -170,7 +183,9 @@ export class Assistant {
         log.write({ type: 'route', requestId, route: 'instant' });
         // Keep local commands in the history so follow-ups ("and make it louder") make sense.
         conversation.messages.push({ role: 'user', text: scrubbed.text });
-        return { text: results.map((r) => r.speak).join(' '), ok: true };
+        const reply = results.map((r) => r.speak).join(' ');
+        this.recordInstant(conversation, planned, results, reply, scrubbed.findings);
+        return { text: reply, ok: true };
       }
     }
 
@@ -226,7 +241,7 @@ export class Assistant {
    * (e.g. no app matched "my editor"), returns null so the LLM gets a chance instead.
    */
   private async runInstant(
-    planned: { name: string; args: Record<string, unknown> }[],
+    planned: PlannedCall[],
     ctx: Parameters<ToolExecutor['execute']>[1],
   ): Promise<ToolResult[] | null> {
     const results: ToolResult[] = [];
@@ -242,6 +257,71 @@ export class Assistant {
       if (!result.ok) break;
     }
     return results;
+  }
+
+  /**
+   * Adds a locally handled command to the history in the shape the AI's own actions have: the
+   * tool calls, their results, then the spoken reply. A bare "Opening Discord." with no call
+   * taught models that saying it is doing it (D-027).
+   */
+  private recordInstant(
+    conversation: Conversation,
+    planned: PlannedCall[],
+    results: ToolResult[],
+    reply: string,
+    findings: ScrubResult['findings'],
+  ): void {
+    const { guard } = this.deps;
+    const { session } = conversation;
+
+    // The parser lower-cases the user's words, and some detectors need the original case or the
+    // words around a value. So first mask every value already found in this command, however it
+    // is now written, then scrub as usual.
+    const known = findings.flatMap(({ placeholder }) => {
+      const pattern = loosePattern(session.valueOf(placeholder) ?? '');
+      return pattern ? [{ placeholder, pattern }] : [];
+    });
+    const maskKnown = (text: string) =>
+      known.reduce((t, k) => t.replace(k.pattern, k.placeholder), text);
+    const scrubArgs = (value: unknown): unknown => {
+      if (typeof value === 'string') return guard.scrub(maskKnown(value), session).text;
+      if (Array.isArray(value)) return value.map(scrubArgs);
+      if (value && typeof value === 'object') {
+        return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, scrubArgs(v)]));
+      }
+      return value;
+    };
+
+    // Only the calls that ran: a failure stops the rest of a compound command.
+    const calls = results.map((result, index) => ({
+      id: randomUUID(),
+      name: planned[index]!.name,
+      args: scrubArgs(planned[index]!.args) as Record<string, unknown>,
+      result,
+    }));
+    conversation.messages.push(
+      { role: 'assistant', toolCalls: calls.map(({ id, name, args }) => ({ id, name, args })) },
+      {
+        role: 'tool',
+        results: calls.map(({ id, name, result }) => ({
+          id,
+          name,
+          // No data: the spoken sentence is enough for a command that needed no AI.
+          content: guard.scrubJson(
+            {
+              ok: result.ok,
+              message: result.cancelled
+                ? 'The user said no when asked to confirm, so this was not done.'
+                : maskKnown(result.speak),
+            },
+            session,
+            result.fromScreen ? { maskContactInfo: true } : {},
+          ),
+        })),
+      },
+      // Tools repeat their arguments in what they say, so the reply gets the same masking.
+      { role: 'assistant', text: guard.scrub(maskKnown(reply), session).text },
+    );
   }
 
   private async runLlm(

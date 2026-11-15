@@ -4,7 +4,11 @@ import { describe, expect, it } from 'vitest';
 import type { AssistantEvent } from '../../../src/shared/assistant';
 import { Assistant } from '../../../src/main/agent/assistant';
 import { PrivacyGuard } from '../../../src/main/privacy/guard';
-import { ProviderError, type LlmProvider } from '../../../src/main/providers/llm/types';
+import {
+  ProviderError,
+  type ChatMessage,
+  type LlmProvider,
+} from '../../../src/main/providers/llm/types';
 import { QuotaTracker } from '../../../src/main/router/quota';
 import { LlmRouter } from '../../../src/main/router/router';
 import { JsonlLog } from '../../../src/main/safety/action-log';
@@ -89,6 +93,9 @@ function setup(options: {
   return { run, win, launched, opened, confirms, events, quota, readLogs };
 }
 
+const toolCallsIn = (messages: ChatMessage[]) =>
+  messages.flatMap((m) => (m.role === 'assistant' ? (m.toolCalls ?? []) : []));
+
 describe('Assistant: instant path', () => {
   it('runs "open spotify and set volume to 30" locally with no LLM call', async () => {
     const gemini = new FakeProvider('gemini', []);
@@ -121,11 +128,126 @@ describe('Assistant: instant path', () => {
     await t.run('open spotify');
     await t.run('and make it quieter than usual');
     const messages = gemini.requests[0]!.messages;
-    expect(messages.slice(0, 2)).toEqual([
+    // The same shape the AI's own actions have: call, result, then what was said (D-027).
+    const id = toolCallsIn(messages)[0]!.id;
+    expect(id).toEqual(expect.any(String));
+    expect(messages).toEqual([
       { role: 'user', text: 'open spotify' },
+      { role: 'assistant', toolCalls: [{ id, name: 'open_app', args: { name: 'spotify' } }] },
+      {
+        role: 'tool',
+        results: [{ id, name: 'open_app', content: '{"ok":true,"message":"Opening Spotify."}' }],
+      },
       { role: 'assistant', text: 'Opening Spotify.' },
+      { role: 'user', text: 'and make it quieter than usual' },
     ]);
-    expect(messages.at(-1)).toEqual({ role: 'user', text: 'and make it quieter than usual' });
+  });
+
+  it('records every call of a compound command, with its own result', async () => {
+    const gemini = new FakeProvider('gemini', [{ text: 'Sure.', toolCalls: [] }]);
+    const t = setup({ providers: [gemini] });
+    await t.run('open spotify and set volume to 30');
+    await t.run('tell me a joke');
+    const messages = gemini.requests[0]!.messages;
+    expect(messages.map((m) => m.role)).toEqual(['user', 'assistant', 'tool', 'assistant', 'user']);
+    const calls = toolCallsIn(messages);
+    expect(calls.map(({ name, args }) => ({ name, args }))).toEqual([
+      { name: 'open_app', args: { name: 'spotify' } },
+      { name: 'set_volume', args: { level: 30 } },
+    ]);
+    expect(new Set(calls.map((c) => c.id)).size).toBe(2);
+    expect(messages[2]).toEqual({
+      role: 'tool',
+      results: [
+        { id: calls[0]!.id, name: 'open_app', content: '{"ok":true,"message":"Opening Spotify."}' },
+        {
+          id: calls[1]!.id,
+          name: 'set_volume',
+          content: '{"ok":true,"message":"Volume set to 30%."}',
+        },
+      ],
+    });
+    expect(messages[3]).toEqual({ role: 'assistant', text: 'Opening Spotify. Volume set to 30%.' });
+  });
+
+  it('records a call that failed part-way, and not the ones after it', async () => {
+    const gemini = new FakeProvider('gemini', [{ text: 'Sure.', toolCalls: [] }]);
+    const t = setup({ providers: [gemini] });
+    await t.run('set volume to 30, open notepadzz and mute');
+    await t.run('tell me a joke');
+    const messages = gemini.requests[0]!.messages;
+    expect(toolCallsIn(messages).map((c) => c.name)).toEqual(['set_volume', 'open_app']);
+    const results = messages.flatMap((m) => (m.role === 'tool' ? m.results : []));
+    expect(results.map((r) => (JSON.parse(r.content) as { ok: boolean }).ok)).toEqual([
+      true,
+      false,
+    ]);
+    expect(t.win.volume.muted).toBe(false);
+  });
+
+  it('records a declined confirmation as a call the user said no to', async () => {
+    const gemini = new FakeProvider('gemini', [{ text: 'Sure.', toolCalls: [] }]);
+    const t = setup({ providers: [gemini], approve: false });
+    expect(await t.run('close spotify')).toBe("Okay, I won't do that.");
+    await t.run('tell me a joke');
+    const messages = gemini.requests[0]!.messages;
+    const id = toolCallsIn(messages)[0]!.id;
+    expect(messages.slice(1, 4)).toEqual([
+      { role: 'assistant', toolCalls: [{ id, name: 'close_app', args: { name: 'spotify' } }] },
+      {
+        role: 'tool',
+        results: [
+          {
+            id,
+            name: 'close_app',
+            content:
+              '{"ok":false,"message":"The user said no when asked to confirm, so this was not done."}',
+          },
+        ],
+      },
+      { role: 'assistant', text: "Okay, I won't do that." },
+    ]);
+    expect(t.win.actions).toEqual([]);
+  });
+
+  it('records nothing from a local attempt that was handed to the AI instead', async () => {
+    const gemini = new FakeProvider('gemini', [{ text: 'Which app do you mean?', toolCalls: [] }]);
+    const t = setup({ providers: [gemini] });
+    await t.run('open notepadzz');
+    expect(gemini.requests).toHaveLength(1);
+    expect(gemini.requests[0]!.messages).toEqual([{ role: 'user', text: 'open notepadzz' }]);
+  });
+
+  it('counts a tool used locally as already used when choosing tools for the AI', async () => {
+    const gemini = new FakeProvider('gemini', [{ text: 'Paris.', toolCalls: [] }]);
+    const t = setup({ providers: [gemini] });
+    await t.run('set volume to 30');
+    // No word of this matches a tool group; on its own it would be sent every tool.
+    await t.run('what is the capital of France');
+    const names = gemini.requests[0]!.tools.map((s) => s.name);
+    expect(names).toContain('set_volume');
+    expect(names).toContain('more_tools');
+    expect(names).not.toContain('window_action');
+  });
+
+  it('never shows a provider a sensitive value from a local command', async () => {
+    // The parser lower-cases what it passes on, which the key and IBAN detectors would miss.
+    const secrets = ['4111 1111 1111 1111', 'AKIAIOSFODNN7EXAMPLE', 'GB82WEST12345698765432'];
+    const gemini = new FakeProvider('gemini', [{ text: 'Sure.', toolCalls: [] }]);
+    const t = setup({ providers: [gemini] });
+    for (const secret of secrets) await t.run(`set volume to 30 and open ${secret}`);
+    await t.run('tell me a joke');
+
+    const messages = gemini.requests[0]!.messages;
+    const sent = JSON.stringify(gemini.requests).toLowerCase();
+    for (const secret of secrets) {
+      expect(sent, `provider saw ${secret}`).not.toContain(secret.toLowerCase());
+    }
+    expect(
+      toolCallsIn(messages)
+        .filter((c) => c.name === 'open_app')
+        .map((c) => c.args),
+    ).toEqual([{ name: '[CARD_1]' }, { name: '[API_KEY_1]' }, { name: '[IBAN_1]' }]);
   });
 
   it('falls back to the LLM when the instant guess finds no app', async () => {
