@@ -250,6 +250,25 @@ export const tasks: EvalTask[] = [
     },
   },
   {
+    // Three local turns, then one for the model: it must act, not just say "Closing Spotify."
+    // the way the history of local commands used to look (issue 14, D-027).
+    id: 'follow-up-after-local-turns',
+    category: 'follow-up',
+    say: [
+      'open spotify',
+      'pause the music',
+      'set the volume to 30',
+      'now shut the music app down for me',
+    ],
+    expect: {
+      routes: ['instant', 'instant', 'instant', 'llm'],
+      tools: ['close_app'],
+      confirms: true,
+      maxLlmCalls: 2,
+      state: (w) => closed(w, 1),
+    },
+  },
+  {
     id: 'lookup-windows',
     category: 'lookup',
     say: ['which windows do I have open right now?'],
