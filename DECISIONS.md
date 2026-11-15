@@ -388,3 +388,24 @@ stand unless an entry here says otherwise.
     and command Aida. Not chosen.
 - **Consequences:** A TV or another person saying only "Hey Aida" makes the pill and chime appear,
   but no command runs. Based on seven short clips; to be confirmed with the Phase 3 voice evals.
+
+## D-025: "Open <app>" shows a window the app already has before launching it
+
+- **Date:** 2026-11-14
+- **Status:** Accepted
+- **Context:** "Open Discord" replied "Opening Discord." and did nothing. Discord was already
+  running with its main window hidden (it stays in the tray when closed), and launching an app
+  that is already running hidden does not bring its window back. Reproduced outside AI-DA.
+- **Decision:** `open_app` first looks for a window the app already has. A visible one is brought
+  to the front. A hidden main window is shown and brought to the front. Only if there is neither
+  is the app launched, as before. Replies stay immediate.
+- **Options considered:**
+  - Launch, then wait and report if no window appeared: honest, but Discord still would not open
+    and every "open" reply would be delayed. Not chosen.
+  - Both, waiting to confirm a window before replying: the most truthful, but slower, and
+    slow-starting games would be reported as not opening. Not chosen.
+- **Consequences:** The Windows helper gains a command that lists hidden top-level windows, and
+  one that shows a window. Hidden windows are only used when they are titled, of normal size and
+  belong to a process whose name matches the app, since an app can have hidden windows that are
+  not its interface. "Open Chrome" with Chrome already open now brings it forward instead of
+  opening another window. A launch is still not verified.

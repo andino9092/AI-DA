@@ -95,7 +95,9 @@ describe('Assistant: instant path', () => {
     const t = setup({ providers: [gemini] });
     const reply = await t.run('open spotify and set volume to 30');
     expect(reply).toBe('Opening Spotify. Volume set to 30%.');
-    expect(t.launched).toEqual(['SpotifyAB.SpotifyMusic_zpdnekdrzrea0!Spotify']);
+    // Spotify is already running: its window is brought forward instead of launching it again.
+    expect(t.launched).toEqual([]);
+    expect(t.win.actions).toEqual([{ handle: 1, action: 'focus' }]);
     expect(t.win.volume.level).toBe(30);
     expect(gemini.requests).toHaveLength(0);
   });

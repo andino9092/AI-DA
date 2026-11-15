@@ -19,6 +19,16 @@ const CARD = '4111 1111 1111 1111';
 /** "I can't do that", in the ways models say it (some write a curly apostrophe). */
 const DECLINES = /can['’]t|cannot|can not|unable|not able|don['’]t have|no way|not something/i;
 
+/**
+ * The app is up: launched, or (already running) its window brought to the front or shown.
+ * In the default PC Spotify is window 1 and Discord window 3; VS Code isn't running.
+ */
+const opened = (w: EvalWorld, appId: string, handle?: number) =>
+  w.launched.includes(appId) ||
+  (handle !== undefined &&
+    (w.pc.shown.includes(handle) ||
+      w.pc.actions.some((a) => a.handle === handle && a.action === 'focus')));
+
 const closed = (w: EvalWorld, handle: number) =>
   w.pc.actions.some((a) => a.handle === handle && a.action === 'close');
 const appAudio = (w: EvalWorld, process: string) =>
@@ -70,7 +80,27 @@ export const tasks: EvalTask[] = [
     id: 'app-open-named',
     category: 'single',
     say: ['open spotify'],
-    expect: { routes: ['instant'], state: (w) => w.launched.includes(SPOTIFY) },
+    expect: { routes: ['instant'], state: (w) => opened(w, SPOTIFY, 1) },
+  },
+  {
+    // Discord closed to the tray: still running, its window hidden. Launching it does nothing.
+    id: 'app-open-from-tray',
+    category: 'single',
+    setup: (w) => {
+      w.pc.hidden = w.pc.windows.filter((win) => win.process === 'Discord');
+      w.pc.windows = w.pc.windows.filter((win) => win.process !== 'Discord');
+    },
+    say: ['open discord'],
+    expect: {
+      routes: ['instant'],
+      state: (w) => w.pc.shown.includes(3) && w.launched.length === 0,
+    },
+  },
+  {
+    id: 'app-open-not-running',
+    category: 'single',
+    say: ['open visual studio code'],
+    expect: { routes: ['instant'], state: (w) => w.launched.includes(VS_CODE) },
   },
   {
     id: 'app-close-confirmed',
@@ -170,8 +200,7 @@ export const tasks: EvalTask[] = [
     expect: {
       routes: ['llm'],
       maxLlmCalls: 2,
-      state: (w) =>
-        w.launched.includes(DISCORD) && w.launched.includes(VS_CODE) && w.pc.volume.level === 20,
+      state: (w) => opened(w, DISCORD, 3) && opened(w, VS_CODE) && w.pc.volume.level === 20,
     },
   },
   {
@@ -189,19 +218,19 @@ export const tasks: EvalTask[] = [
     id: 'described-music-app',
     category: 'described',
     say: ['open my music app'],
-    expect: { routes: ['llm'], maxLlmCalls: 3, state: (w) => w.launched.includes(SPOTIFY) },
+    expect: { routes: ['llm'], maxLlmCalls: 3, state: (w) => opened(w, SPOTIFY, 1) },
   },
   {
     id: 'described-code-editor',
     category: 'described',
     say: ['open the program I write code in'],
-    expect: { routes: ['llm'], maxLlmCalls: 3, state: (w) => w.launched.includes(VS_CODE) },
+    expect: { routes: ['llm'], maxLlmCalls: 3, state: (w) => opened(w, VS_CODE) },
   },
   {
     id: 'described-chat-app',
     category: 'described',
     say: ['I want to talk to my friends, open the right app for that'],
-    expect: { routes: ['llm'], maxLlmCalls: 3, state: (w) => w.launched.includes(DISCORD) },
+    expect: { routes: ['llm'], maxLlmCalls: 3, state: (w) => opened(w, DISCORD, 3) },
   },
   {
     id: 'follow-up-louder',

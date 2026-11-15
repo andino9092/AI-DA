@@ -18,6 +18,15 @@ namespace Aida
         [StructLayout(LayoutKind.Sequential)]
         public struct MONITORINFO { public int cbSize; public RECT rcMonitor; public RECT rcWork; public uint dwFlags; }
 
+        [StructLayout(LayoutKind.Sequential)]
+        public struct WINDOWPLACEMENT
+        {
+            public int length; public int flags; public int showCmd;
+            public int minX; public int minY; public int maxX; public int maxY;
+            public RECT rcNormalPosition;
+        }
+
+        [DllImport("user32.dll")] private static extern bool GetWindowPlacement(IntPtr hWnd, ref WINDOWPLACEMENT placement);
         [DllImport("user32.dll")] private static extern bool SetProcessDpiAwarenessContext(IntPtr value);
         [DllImport("user32.dll")] private static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);
         [DllImport("user32.dll")] private static extern bool EnumDisplayMonitors(IntPtr hdc, IntPtr clip, MonitorEnumProc callback, IntPtr data);
@@ -68,6 +77,33 @@ namespace Aida
                 int cloaked;
                 if (DwmGetWindowAttributeInt(hWnd, DWMWA_CLOAKED, out cloaked, 4) == 0 && cloaked != 0) return true;
                 if (GetWindowTextLength(hWnd) == 0) return true;
+                result.Add(Describe(hWnd));
+                return true;
+            }, IntPtr.Zero);
+            return result;
+        }
+
+        /// <summary>
+        /// Hidden top-level windows that look like an app's main window: titled, unowned, not a
+        /// tool window and of normal size. Apps that stay in the tray (Discord, Steam) keep their
+        /// main window like this, and launching them again does not show it.
+        /// </summary>
+        public static List<Dictionary<string, object>> Hidden()
+        {
+            List<Dictionary<string, object>> result = new List<Dictionary<string, object>>();
+            EnumWindows(delegate (IntPtr hWnd, IntPtr lParam)
+            {
+                if (IsWindowVisible(hWnd)) return true;
+                if (GetWindow(hWnd, GW_OWNER) != IntPtr.Zero) return true;
+                if ((GetWindowLong(hWnd, GWL_EXSTYLE) & WS_EX_TOOLWINDOW) != 0) return true;
+                if (GetWindowTextLength(hWnd) == 0) return true;
+                // Message-only helpers (IME, DDE, overlays) are tiny or have no size at all. A window
+                // hidden while minimized reports a stub size, so judge it by its restored size.
+                WINDOWPLACEMENT placement = new WINDOWPLACEMENT();
+                placement.length = Marshal.SizeOf(typeof(WINDOWPLACEMENT));
+                if (!GetWindowPlacement(hWnd, ref placement)) return true;
+                RECT rect = placement.rcNormalPosition;
+                if (rect.Right - rect.Left < 300 || rect.Bottom - rect.Top < 200) return true;
                 result.Add(Describe(hWnd));
                 return true;
             }, IntPtr.Zero);
@@ -134,6 +170,9 @@ namespace Aida
             switch (action)
             {
                 case "focus": Focus(hWnd); return true;
+                // A window its app hid (closed to the tray): make it visible again, then focus it.
+                // Restoring also un-minimizes: apps often hide their window while it is minimized.
+                case "show": ShowWindow(hWnd, IsIconic(hWnd) ? 9 : 5); Focus(hWnd); return IsWindowVisible(hWnd);
                 case "minimize": return ShowWindow(hWnd, 6);
                 case "maximize": ShowWindow(hWnd, 3); Focus(hWnd); return true;
                 case "restore": ShowWindow(hWnd, 9); Focus(hWnd); return true;

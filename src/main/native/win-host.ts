@@ -149,6 +149,13 @@ export interface WindowsBridge {
     app?: string,
   ): Promise<MediaSession & { accepted: boolean; trackChanged: boolean }>;
   listWindows(): Promise<WindowInfo[]>;
+  /**
+   * Main-looking windows their app has hidden (closed to the tray). Launching such an app again
+   * does not bring the window back; showWindow does.
+   */
+  listHiddenWindows(): Promise<WindowInfo[]>;
+  /** Makes a hidden window visible and brings it to the front. False if it stayed hidden. */
+  showWindow(handle: number): Promise<boolean>;
   foregroundWindow(): Promise<number>;
   windowInfo(handle: number): Promise<WindowInfo>;
   windowAction(handle: number, action: WindowAction): Promise<boolean>;
@@ -333,6 +340,18 @@ export class SidecarWindowsBridge implements WindowsBridge {
       .array(windowSchema)
       .parse(await this.call('windows.list'))
       .filter((w) => w.pid !== own);
+  }
+
+  async listHiddenWindows() {
+    const own = process.pid;
+    return z
+      .array(windowSchema)
+      .parse(await this.call('windows.hidden'))
+      .filter((w) => w.pid !== own);
+  }
+
+  async showWindow(handle: number) {
+    return z.boolean().parse(await this.call('windows.act', { handle, action: 'show' }));
   }
 
   async foregroundWindow() {

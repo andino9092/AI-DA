@@ -90,6 +90,19 @@ export class FakeWindows implements WindowsBridge {
   async listWindows() {
     return this.windows.map((w) => ({ ...w }));
   }
+  /** Windows their app has hidden (closed to the tray). */
+  hidden: WindowInfo[] = [];
+  shown: number[] = [];
+  async listHiddenWindows() {
+    return this.hidden.map((w) => ({ ...w }));
+  }
+  async showWindow(handle: number) {
+    const index = this.hidden.findIndex((w) => w.handle === handle);
+    if (index < 0) return false;
+    this.windows.push(...this.hidden.splice(index, 1));
+    this.shown.push(handle);
+    return true;
+  }
   async foregroundWindow() {
     return this.foreground;
   }

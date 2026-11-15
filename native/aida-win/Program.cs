@@ -94,6 +94,7 @@ namespace Aida
                 case "media.control": return Media.Control(a.Str("action"), a.OptStr("app"));
 
                 case "windows.list": return Win.List();
+                case "windows.hidden": return Win.Hidden();
                 case "windows.foreground": return Win.Foreground();
                 case "windows.info": return Win.Info(a.Long("handle"));
                 case "windows.act": return Win.Act(a.Long("handle"), a.Str("action"));
