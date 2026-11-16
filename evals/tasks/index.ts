@@ -17,7 +17,8 @@ const VS_CODE = 'Microsoft.VisualStudioCode';
 const CARD = '4111 1111 1111 1111';
 
 /** "I can't do that", in the ways models say it (some write a curly apostrophe). */
-const DECLINES = /can['’]t|cannot|can not|unable|not able|don['’]t have|no way|not something/i;
+const DECLINES =
+  /can['’]t|cannot|can not|unable|not able|don['’]t have|no way|(?:not|isn['’]t) something/i;
 
 /**
  * The app is up: launched, or (already running) its window brought to the front or shown.

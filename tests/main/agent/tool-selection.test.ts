@@ -86,6 +86,12 @@ describe('tool selection', () => {
     expect([...(selectGroups([text]) ?? [])].sort()).toEqual([...groups].sort());
   });
 
+  it('offers the audio tools for "silence", which a model once answered by closing the app', () => {
+    // Without the mute tool, "silence Discord" got close_app or a media pause instead (issue 4).
+    expect(selectGroups(['silence Discord and stop whatever song is on'])?.has('audio')).toBe(true);
+    expect(selectGroups(['keep Discord silent'])?.has('audio')).toBe(true);
+  });
+
   it('sends everything when no group fits', () => {
     expect(selectGroups(['what is the capital of France'])).toBeNull();
     expect(isSelected('set_volume', null)).toBe(true);

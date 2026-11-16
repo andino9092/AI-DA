@@ -28,7 +28,7 @@ export const TOOL_GROUPS = {
       'list_audio',
     ],
     words:
-      /\b(?:volume|loud|louder|quiet|quieter|softer|mute|unmute|sound|audio|speakers?|headphones?|headset|earbuds?|output|hear)|\bturn (?:it |this |that |the \w+ )?(?:up|down)\b/,
+      /\b(?:volume|loud|louder|quiet|quieter|softer|mute|unmute|silen(?:ce|t)|hush|sound|audio|speakers?|headphones?|headset|earbuds?|output|hear)|\bturn (?:it |this |that |the \w+ )?(?:up|down)\b/,
   },
   media: {
     summary: 'play, pause, skip, what is playing, Spotify search/queue/like/shuffle',
